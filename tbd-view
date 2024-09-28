@@ -1,0 +1,104 @@
+#!/usr/bin/env bash
+#
+set -eo pipefail
+
+prompt_prefix=${1:?}
+tbd_pid=${1%%.*}
+
+# where commands are written to and outputs are to be read from and shown
+tbd_pipe=.tbd-out.$$
+mkfifo "$tbd_pipe"
+echo "$tbd_pipe"      # output line 1
+
+# where the current source line number should be written to by the debugger
+view_pipe=.tbd-view.$$
+mkfifo "$view_pipe"
+echo "$view_pipe"     # output line 2
+
+fifo-ack () {
+    local fifo=${1:-${tbd_pipe:?}}
+    echo ACK > "$fifo"
+}
+
+main () {
+    : ${tbd_pid:?} ${prompt_prefix:?} ${window_name:?}
+    [[ -p "${tbd_pipe:?}"  ]]
+    [[ -p "${view_pipe:?}" ]]
+    trap '
+        tmux kill-pane -t ":=$window_name.right"
+        rm -f "$view_pipe" "$tbd_pipe" "$0"
+    ' EXIT
+
+    ( while kill -0 $tbd_pid >/dev/null 2>&1; do sleep 1; done
+      kill $$
+    ) &
+
+    view-source-pane
+
+    local line response
+    while true; do
+        response=$(cat "$tbd_pipe") && fifo-ack
+        if [[ $response == "$prompt_prefix"* ]]; then
+            printf %s "${response#$prompt_prefix}"
+            IFS= read -r line
+            [[ $? == 0 && $line != /stop ]] || break
+            echo "$line" > "$tbd_pipe"
+        else
+            printf "%s\n" "$response"
+        fi
+    done
+    echo /stop > "$tbd_pipe"
+}
+
+view-source-pane () {
+    [[ -p ${view_pipe:?} ]]
+
+    source-viewer () {
+        local pipe=${1:?} file from to
+        while true; do
+            file=$(cat "$pipe") && fifo-ack "$pipe"
+            read -r from to < "$pipe" && fifo-ack "$pipe"
+            bat --color always \
+                --highlight-line "$from:${to:-$from}" "$file" \
+                | less -K -RX +${from}g
+        done
+    }
+    local view_script; view_script=$(mktemp)
+    cat > "$view_script" <<EOF
+#!/usr/bin/env bash
+#
+set -eo pipefail
+
+$(declare -f fifo-ack)
+$(declare -f source-viewer)
+
+trap 'rm -f "\$0"' EXIT
+
+source-viewer "\$@"
+EOF
+    chmod +x "$view_script"
+    tmux split-window -dh -t :="$window_name" "$view_script" "$view_pipe"
+}
+
+window_name=$$
+echo "$window_name"   # output line 3
+
+repl_script=$(mktemp)
+cat > "$repl_script" <<EOF
+#!/usr/bin/env bash
+set -e
+
+$(declare -p tbd_pid prompt_prefix tbd_pipe view_pipe window_name)
+
+$(declare -f fifo-ack)
+$(declare -f view-source-pane)
+
+$(declare -f main)
+
+main \"\$@\"
+EOF
+
+chmod +x "$repl_script"
+
+
+tmux new-window -n "$window_name" "$repl_script"
