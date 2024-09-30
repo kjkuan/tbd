@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+#
+set -e
+
+source tbd.sh
+
+for n in {1..100}; do
+    { (( n % 15 == 0 )) && echo 'FizzBuzz'; } ||
+    { (( n % 5  == 0 )) && echo 'Buzz'    ; } ||
+    { (( n % 3  == 0 )) && echo 'Fizz'    ; } ||
+    echo "$n"
+done \
+     |
+(  declare -A totals=()
+   while read -r line; do
+       echo "$line"
+       if [[ $line != [0-9]* ]]; then
+           (( ++totals[$line] ))
+       fi
+   done
+   printf "There are %d Fizz, %d Buzz, and %d FizzBuzz!\n" \
+       "${totals[Fizz]:-0}" \
+       "${totals[Buzz]:-0}" \
+       "${totals[FizzBuzz]:-0}"
+)

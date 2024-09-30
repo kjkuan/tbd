@@ -39,15 +39,14 @@ main () {
     while true; do
         response=$(cat "$tbd_pipe") && fifo-ack
         if [[ $response == "$prompt_prefix"* ]]; then
-            printf %s "${response#$prompt_prefix}"
-            IFS= read -r line
-            [[ $? == 0 && $line != /stop ]] || break
+            IFS= read -erp "${response#$prompt_prefix}" line
+            [[ $? == 0 && $line != /resume ]] || break
             echo "$line" > "$tbd_pipe"
         else
             printf "%s\n" "$response"
         fi
     done
-    echo /stop > "$tbd_pipe"
+    echo /resume > "$tbd_pipe"
 }
 
 view-source-pane () {

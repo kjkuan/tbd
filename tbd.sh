@@ -3,7 +3,7 @@
 [[ ! "$(trap -p DEBUG)" ]] || return 0
 
 which bat less tmux >/dev/null 2>&1 || {
-    echo "Source view mode requires 'bat', 'less', and 'tmux' in PATH!"
+    echo "Please make sure 'bat', 'less', and 'tmux' are in PATH!"
     exit 1
 } >&2
 
@@ -13,8 +13,7 @@ which bat less tmux >/dev/null 2>&1 || {
 } >&2
 
 TBD_ORIG_SET=${-/i}
-if [[ $- == *e* ]]; then set +e; fi
-if [[ $- == *u* ]]; then set +u; fi
+set +eu
 
 TBD_HELP=$(cat <<'EOF'
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -33,7 +32,7 @@ Other available debugger commands are:
   /skip     - Skip the current command, resulting in a command status of 1.
   /stepout  - Execute the rest of the function until it returns.
   /help     - Show this help message.
-  /stop     - Exit the debugger and resume the script.
+  /resume   - Exit the debugger and resume the script.
 
 Besides the built-in commands listed above, *ANY* shell commands can be run at
 the prompt; however, currently, TBD only reads and executes one single line at a time.
@@ -83,7 +82,7 @@ tbd-echo () { echo "$@" > "$TBD_PIPE" && tbd-recv-ack; }
 
 tbd-recv-ack () {
     local fifo=${1:-${TBD_PIPE:?}}
-    read -r < "$fifo" && [[ $REPLY == ACK ]] || {
+    read -t2 -r < "$fifo" && [[ $REPLY == ACK ]] || {
         echo "Missing ACK from $fifo" >&2
         return 1
     }
@@ -111,8 +110,8 @@ if [[ ! ${TBD_RETURN_TRAP:-} ]]; then
 
     while true; do
         tbd-print-prompt
-        IFS= read -er TBD_CMD < "$TBD_PIPE"
-        if [[ $? != 0 || $TBD_CMD == /stop ]]; then
+        IFS= read -t2 -er TBD_CMD < "$TBD_PIPE"
+        if [[ $? != 0 || $TBD_CMD == /resume ]]; then
             trap DEBUG; shopt -u extdebug; set -$TBD_ORIG_SET
             break
         fi
