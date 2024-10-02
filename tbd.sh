@@ -32,7 +32,8 @@ Other available debugger commands are:
   /skip     - Skip the current command, resulting in a command status of 1.
   /stepout  - Execute the rest of the function until it returns.
   /help     - Show this help message.
-  /resume   - Exit the debugger and resume the script.
+  /resume   - Resume the script until the next break point (i.e., where 'tbd.sh' is
+              sourced again)
 
 Besides the built-in commands listed above, *ANY* shell commands can be run at
 the prompt; however, currently, TBD only reads and executes one single line at a time.

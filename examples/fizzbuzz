@@ -2,7 +2,7 @@
 #
 set -e
 
-source tbd.sh
+source tbd.sh   # first break point
 
 for n in {1..100}; do
     { (( n % 15 == 0 )) && echo 'FizzBuzz'; } ||
@@ -18,6 +18,10 @@ done \
            (( ++totals[$line] ))
        fi
    done
+
+   # we'll have the second break point here if BREAK_AGAIN is set to non-empty
+   [[ ! ${BREAK_AGAIN:-} ]] || source tbd.sh
+
    printf "There are %d Fizz, %d Buzz, and %d FizzBuzz!\n" \
        "${totals[Fizz]:-0}" \
        "${totals[Buzz]:-0}" \
