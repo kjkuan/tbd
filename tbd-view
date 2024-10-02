@@ -21,11 +21,11 @@ fifo-ack () {
 }
 
 main () {
-    : ${tbd_pid:?} ${prompt_prefix:?} ${window_name:?}
+    : ${tbd_pid:?} ${prompt_prefix:?} ${window_id:?}
     [[ -p "${tbd_pipe:?}"  ]]
     [[ -p "${view_pipe:?}" ]]
     trap '
-        tmux kill-pane -t ":=$window_name.right"
+        tmux kill-pane -t ":$window_id.right"
         rm -f "$view_pipe" "$tbd_pipe" "$0"
     ' EXIT
 
@@ -76,18 +76,19 @@ trap 'rm -f "\$0"' EXIT
 source-viewer "\$@"
 EOF
     chmod +x "$view_script"
-    tmux split-window -dh -t :="$window_name" "$view_script" "$view_pipe"
+    tmux split-window -dh -t ":$window_id" "$view_script" "$view_pipe"
 }
 
-window_name=$$
-echo "$window_name"   # output line 3
+window_name=$$; tmux new-window -n "$window_name"
+window_id=$(tmux display-message -t ":=$window_name" -pF '#{window_id}')
+echo "$window_id"     # output line 3
 
 repl_script=$(mktemp)
 cat > "$repl_script" <<EOF
 #!/usr/bin/env bash
 set -e
 
-$(declare -p tbd_pid prompt_prefix tbd_pipe view_pipe window_name)
+$(declare -p tbd_pid prompt_prefix tbd_pipe view_pipe window_id)
 
 $(declare -f fifo-ack)
 $(declare -f view-source-pane)
@@ -99,5 +100,4 @@ EOF
 
 chmod +x "$repl_script"
 
-
-tmux new-window -n "$window_name" "$repl_script"
+tmux send-key -t ":$window_id" "exec $(printf %q "$repl_script")"$'\n'

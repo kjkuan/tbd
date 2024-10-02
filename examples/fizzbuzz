@@ -2,7 +2,11 @@
 #
 set -e
 
+echo "Running and debugging $0 ..."
+
 source tbd.sh   # first break point
+
+BREAK_AGAIN=
 
 for n in {1..100}; do
     { (( n % 15 == 0 )) && echo 'FizzBuzz'; } ||

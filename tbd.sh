@@ -2,8 +2,11 @@
 
 [[ ! "$(trap -p DEBUG)" ]] || return 0
 
-which bat less tmux >/dev/null 2>&1 || {
-    echo "Please make sure 'bat', 'less', and 'tmux' are in PATH!"
+if which batcat >/dev/null 2>&1; then
+    bat () { batcat "$@"; }
+fi
+[[ $(type -t bat) == @(file|function) ]] && which less tmux >/dev/null 2>&1 || {
+    echo "Please make sure 'bat' / 'batcat', 'less', and 'tmux' are in PATH!"
     exit 1
 } >&2
 
@@ -118,7 +121,7 @@ if [[ ! ${TBD_RETURN_TRAP:-} ]]; then
         fi
 
         case $TBD_CMD in
-                 *) tmux send-keys -t :=$TBD_WINDOW_ID.right q ;;&
+                 *) tmux send-keys -t ":$TBD_WINDOW_ID.right" q ;;&
                 "") TBD_RC=0; break ;;
              /skip) TBD_RC=1; break ;;
           /stepout) (( ${#FUNCNAME[*]} > 1 )) || {

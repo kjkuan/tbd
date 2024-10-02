@@ -17,7 +17,7 @@ and `tmux` in `PATH`.
 
 
 ## Installation and Usage
-Currently, there's no automatic installation; just put `tbd.sh` and `tbd-view` somewhere
-in `PATH` and make both executable. To use it, simply `source tbd.sh` somewhere in
-your script, and run your script from a `tmux` window; follow the on-screen help
-for instructions.
+Currently, there's no automatic installation; just put `tbd.sh` and `tbd-view`
+somewhere in `PATH` and make both executable. To use it, simply `source tbd.sh`
+somewhere in your script, and run your script from a `tmux` window; follow the
+on-screen help, or enter `/help`, for instructions.
