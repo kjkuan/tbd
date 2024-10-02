@@ -10,6 +10,8 @@ times in the script. Please see the [examples/fizzbuzz] script for details.
 
 > **NOTE:** _TBD_ temporarily `set +eu` for the duration of a debugging session.
 
+Check out the demo [![asciicast](https://asciinema.org/a/btQpdrIcFKJuqgsARFvp7LEXY.svg)](https://asciinema.org/a/btQpdrIcFKJuqgsARFvp7LEXY)
+
 
 ## Prerequisites
 You need to be running in a `tmux` session already, and have `bat`, `less`,
