@@ -6,7 +6,8 @@ Once at the break point, _TBD_ will take over and run in a separate `tmux` windo
 from which you can interact and explore the execution environment of the script.
 
 Multiple and conditional break points are possible by sourcing _TBD_ multiple
-times in the script. Please see the [examples/fizzbuzz] script for details.
+times in the script. Please see the [examples/fizzbuzz](examples/fizzbuzz) script
+for details.
 
 > **NOTE:** _TBD_ temporarily `set +eu` for the duration of a debugging session.
 

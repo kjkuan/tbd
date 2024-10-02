@@ -2,37 +2,47 @@
 #
 set -e
 
-echo "Running and debugging $0 ..."
-
-source tbd.sh   # first break point
-
 BREAK_AGAIN=
 
-echo "Starting a pipeline to compute fizzbuzz ..."
+fizzbuzz () {
+    local n
+    for n in {1..100}; do
+        { (( n % 15 == 0 )) && echo 'FizzBuzz'; } ||
+        { (( n % 5  == 0 )) && echo 'Buzz'    ; } ||
+        { (( n % 3  == 0 )) && echo 'Fizz'    ; } ||
+        echo "$n"
+    done
+}
 
-for n in {1..100}; do
-    { (( n % 15 == 0 )) && echo 'FizzBuzz'; } ||
-    { (( n % 5  == 0 )) && echo 'Buzz'    ; } ||
-    { (( n % 3  == 0 )) && echo 'Fizz'    ; } ||
-    echo "$n"
-done \
-     |
-(  declare -A totals=()
-   while read -r line; do
-       echo "$line"
-       if [[ $line != [0-9]* ]]; then
-           (( ++totals[$line] ))
-       fi
-   done
+main () {
+    echo "Running and debugging $0 ..."
 
-   # we'll have the second break point here if BREAK_AGAIN is set to non-empty
-   [[ ! ${BREAK_AGAIN:-} ]] || source tbd.sh
+    source tbd.sh   # first break point
 
-   echo
-   printf "There are %d Fizz, %d Buzz, and %d FizzBuzz!\n" \
-       "${totals[Fizz]:-0}" \
-       "${totals[Buzz]:-0}" \
-       "${totals[FizzBuzz]:-0}"
-)
+    echo "Starting a pipeline to compute fizzbuzz and totals..."
 
-echo "--- The End ---"
+    fizzbuzz \
+       |
+    (declare -A totals=()
+     while read -r line; do
+         echo "$line"
+         if [[ $line != [0-9]* ]]; then
+             (( ++totals[$line] ))
+         fi
+     done
+
+     # we'll have the second break point here if BREAK_AGAIN is set to non-empty
+     [[ ! ${BREAK_AGAIN:-} ]] || source tbd.sh
+
+     echo
+     printf "There are %d Fizz, %d Buzz, and %d FizzBuzz!\n" \
+         "${totals[Fizz]:-0}" \
+         "${totals[Buzz]:-0}" \
+         "${totals[FizzBuzz]:-0}"
+    )
+
+    echo "--- The End ---"
+}
+
+
+main "$@"
