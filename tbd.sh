@@ -24,16 +24,13 @@ status of the previous command before entering the DEBUG trap. The line above it
 is the current command (not executed yet) the debugger is stepping on. What happens
 next depends on what you do at the prompt:
 
-  - Hit 'Enter' alone to execute or step into the current command.
-  - 'Ctrl-D' to exit the debugger and resume the script.
-
-Other available debugger commands are:
+  Press 'Enter' alone to execute or step into the current command.
 
   /skip     - Skip the current command, resulting in a command status of 1.
   /stepout  - Execute the rest of the function until it returns.
   /help     - Show this help message.
-  /resume   - Resume the script until the next break point (i.e., where 'tbd.sh' is
-              sourced again)
+  /resume   - Same as 'Ctrl-D'; resume the script until the next break point (i.e.,
+              where 'tbd.sh' is sourced again).
 
 Besides the built-in commands listed above, *ANY* shell commands can be run at
 the prompt; however, currently, TBD only reads and executes one single line at a time.
