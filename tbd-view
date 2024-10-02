@@ -32,7 +32,6 @@ main () {
     ( while kill -0 $tbd_pid >/dev/null 2>&1; do sleep 1; done
       kill $$
     ) &
-
     view-source-pane
 
     local line response
@@ -53,6 +52,7 @@ view-source-pane () {
     [[ -p ${view_pipe:?} ]]
 
     source-viewer () {
+        if which batcat >/dev/null 2>&1; then bat () { batcat "$@"; }; fi
         local pipe=${1:?} file from to
         while true; do
             file=$(cat "$pipe") && fifo-ack "$pipe"
@@ -95,6 +95,7 @@ $(declare -f view-source-pane)
 
 $(declare -f main)
 
+clear
 main \"\$@\"
 EOF
 

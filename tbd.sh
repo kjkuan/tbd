@@ -2,10 +2,7 @@
 
 [[ ! "$(trap -p DEBUG)" ]] || return 0
 
-if which batcat >/dev/null 2>&1; then
-    bat () { batcat "$@"; }
-fi
-[[ $(type -t bat) == @(file|function) ]] && which less tmux >/dev/null 2>&1 || {
+{ { which batcat || which bat; } && which less tmux; } >/dev/null 2>&1 || {
     echo "Please make sure 'bat' / 'batcat', 'less', and 'tmux' are in PATH!"
     exit 1
 } >&2
@@ -114,10 +111,10 @@ if [[ ! ${TBD_RETURN_TRAP:-} ]]; then
 
     while true; do
         tbd-print-prompt
-        IFS= read -t2 -er TBD_CMD < "$TBD_PIPE"
+        IFS= read -t2 -r TBD_CMD < "$TBD_PIPE"
         if [[ $? != 0 || $TBD_CMD == /resume ]]; then
             trap DEBUG; shopt -u extdebug; set -$TBD_ORIG_SET
-            break
+            TBD_RC=0; break
         fi
 
         case $TBD_CMD in
@@ -134,8 +131,7 @@ if [[ ! ${TBD_RETURN_TRAP:-} ]]; then
                         TBD_RETURN_TRAP=x; trap RETURN
                         eval "$TBD_DEBUG_TRAP"
                     ' RETURN
-                    TBD_RC=0
-                    break
+                    TBD_RC=0; break
                     ;;
             /help) tbd-echo "$TBD_HELP"; continue ;;
         esac

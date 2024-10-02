@@ -8,6 +8,8 @@ source tbd.sh   # first break point
 
 BREAK_AGAIN=
 
+echo "Starting a pipeline to compute fizzbuzz ..."
+
 for n in {1..100}; do
     { (( n % 15 == 0 )) && echo 'FizzBuzz'; } ||
     { (( n % 5  == 0 )) && echo 'Buzz'    ; } ||
@@ -26,8 +28,11 @@ done \
    # we'll have the second break point here if BREAK_AGAIN is set to non-empty
    [[ ! ${BREAK_AGAIN:-} ]] || source tbd.sh
 
+   echo
    printf "There are %d Fizz, %d Buzz, and %d FizzBuzz!\n" \
        "${totals[Fizz]:-0}" \
        "${totals[Buzz]:-0}" \
        "${totals[FizzBuzz]:-0}"
 )
+
+echo "--- The End ---"
