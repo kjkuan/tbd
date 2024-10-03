@@ -18,9 +18,8 @@ times in the script; however, it's not possible to add new break points at
 runtime. Please see the [examples/fizzbuzz](examples/fizzbuzz) script
 for details.
 
-Check out the demo [![asciicast](https://asciinema.org/a/btQpdrIcFKJuqgsARFvp7LEXY.svg)]
+Check out the demo [![asciicast](https://asciinema.org/a/btQpdrIcFKJuqgsARFvp7LEXY.svg)](https://asciinema.org/a/btQpdrIcFKJuqgsARFvp7LEXY)
 
-[asciicast]: https://asciinema.org/a/btQpdrIcFKJuqgsARFvp7LEXY
 
 ## Prerequisites
 You need to be running in a _tmux_ session already, and have `bat`, `less`,
@@ -32,4 +31,6 @@ you should know how to switch between _tmux_ windows.
 Currently, there's no automatic installation; just put `tbd.sh` and `tbd-view`
 somewhere in `PATH` and make both executable. To use it, simply `source tbd.sh`
 somewhere in your script, and run your script from a _tmux_ window; follow the
-on-screen help, or enter `/help`, for instructions, or see the [asciicast] above.
+on-screen help, or enter `/help`, for instructions, or see the [demo] above.
+
+[demo]: https://asciinema.org/a/btQpdrIcFKJuqgsARFvp7LEXY
