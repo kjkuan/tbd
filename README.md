@@ -31,8 +31,8 @@ you should know how to switch between _tmux_ windows.
 
 
 ## Installation and Usage
-Currently, there's no automatic installation; just clone the repo add `tbd.sh` and `tbd-view`
-somewhere in `PATH` and make both executable. For example:
+Currently, there's no automatic installation; just clone the repo, add `tbd.sh` and `tbd-view`
+somewhere in `PATH`, and make both executable. For example:
 
 ```bash
 git clone git@github.com:kjkuan/tbd.git
