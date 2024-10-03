@@ -22,15 +22,25 @@ Check out the demo [![asciicast](https://asciinema.org/a/btQpdrIcFKJuqgsARFvp7LE
 
 
 ## Prerequisites
-You need to be running in a _tmux_ session already, and have `bat`, `less`,
-and `tmux` in `PATH`. Of course, you should know how to use _tmux_, at least,
+You need to be running in a _tmux_ session already, and have [bat], `less`,
+and `tmux` in `PATH`. Of course, you should know how to use _tmux_; at least,
 you should know how to switch between _tmux_ windows.
+
+[bat]: https://github.com/sharkdp/bat
+[tmux]: https://github.com/tmux/tmux
 
 
 ## Installation and Usage
-Currently, there's no automatic installation; just put `tbd.sh` and `tbd-view`
-somewhere in `PATH` and make both executable. To use it, simply `source tbd.sh`
-somewhere in your script, and run your script from a _tmux_ window; follow the
-on-screen help, or enter `/help`, for instructions, or see the [demo] above.
+Currently, there's no automatic installation; just clone the repo add `tbd.sh` and `tbd-view`
+somewhere in `PATH` and make both executable. For example:
+
+```bash
+git clone git@github.com:kjkuan/tbd.git
+cd tbd && PATH=$PWD:$PATH
+```
+
+To use it, simply `source tbd.sh` somewhere in your script, and run your script from
+a _tmux_ window; follow the on-screen help, or enter `/help`, for instructions.
+See also the [demo] above.
 
 [demo]: https://asciinema.org/a/btQpdrIcFKJuqgsARFvp7LEXY

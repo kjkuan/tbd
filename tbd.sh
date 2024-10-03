@@ -35,16 +35,17 @@ next depends on what you do at the prompt:
 Besides the built-in commands listed above, *ANY* shell commands can be run at
 the prompt; however, currently, TBD only reads and executes one single line at a time.
 
-Any commands entered will be evaluated in the context / scope of the command that the
-debugger is currently stepping on, but with output sent to TBD.
+Any commands entered will be sent to the corresponding process and evaluated in the
+context / scope of the command that the debugger is currently stepping on, but with
+output sent to the TBD window.
 
-You can redirect a command's output explicitly to '$TBD_OUT' and/or '$TBD_ERR', if you wish
-to send it to the script's STDOUT and/or STDERR, respectively. E.g.,
+You can redirect a command's output explicitly to '$TBD_OUT' and/or '$TBD_ERR', if
+you wish to send it to the script's STDOUT and/or STDERR, respectively. E.g.,
 
     echo hello >&$TBD_OUT
 
-Finally, whenever a subshell is forked, a new tmux window will be created in the current
-session. Such window will be closed automatically after the subshell terminates.
+Finally, whenever a subshell is forked, TBD will switch to a new window in the current
+tmux session. Such window will be closed automatically after the subshell terminates.
 'Ctrl-C' also terminates the current TBD tmux window or pane.
 
 Tips:
@@ -55,7 +56,6 @@ Tips:
   - You can set or change any local variables when inside a function.
   - You can 'return' from a function, as well as,  'break' or 'continue' a loop.
   - You can run a different command and then '/skip' the current command.
-    This even works in a pipeline so you can change what's being piped through.
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 EOF
 )
