@@ -23,7 +23,7 @@ Check out the demo [![asciicast](https://asciinema.org/a/btQpdrIcFKJuqgsARFvp7LE
 
 ## Prerequisites
 You need to be running in a _tmux_ session already, and have [bat], `less`,
-and `tmux` in `PATH`. Of course, you should know how to use _tmux_; at least,
+and [tmux] in `PATH`. Of course, you should know how to use _tmux_; at least,
 you should know how to switch between _tmux_ windows.
 
 [bat]: https://github.com/sharkdp/bat
