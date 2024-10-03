@@ -25,8 +25,10 @@ main () {
     [[ -p "${tbd_pipe:?}"  ]]
     [[ -p "${view_pipe:?}" ]]
     trap '
+        set +e
         tmux kill-pane -t ":$window_id.right"
         rm -f "$view_pipe" "$tbd_pipe" "$0"
+        history -a
     ' EXIT
 
     ( while kill -0 $tbd_pid >/dev/null 2>&1; do sleep 1; done
@@ -34,11 +36,13 @@ main () {
     ) &
     view-source-pane
 
+    HISTFILE=$HOME/.tbd_history; history -r || true
     local line response rc
     while true; do
         response=$(cat "$tbd_pipe") && fifo-ack
         if [[ $response == "$prompt_prefix"* ]]; then
             IFS= read -erp "${response#$prompt_prefix}" line || rc=$?
+            [[ ! $line ]] || history -s "$line"
             [[ ${rc:-0} == 0 && $line != /resume ]] || break
             echo "$line" > "$tbd_pipe"
         else
