@@ -17,10 +17,7 @@ fizzbuzz () {
 main () {
     echo "Running and debugging $0 ..."
 
-    source tbd.sh   # first break point
-
     echo "Starting a pipeline to compute fizzbuzz and totals..."
-
     fizzbuzz \
        |
     (declare -A totals=()
@@ -44,5 +41,7 @@ main () {
     echo "--- The End ---"
 }
 
+
+source tbd.sh   # first break point
 
 main "$@"

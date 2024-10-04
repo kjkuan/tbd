@@ -43,7 +43,7 @@ main () {
         if [[ $response == "$prompt_prefix"* ]]; then
             IFS= read -erp "${response#$prompt_prefix}" line || rc=$?
             [[ ! $line ]] || history -s "$line"
-            [[ ${rc:-0} == 0 && $line != /resume ]] || break
+            [[ ${rc:-0} == 0 ]] || break  # NOTE: Exiting the loop on Ctrl-D could potentially make the debugged script stuck on a break point.
             echo "$line" > "$tbd_pipe"
         else
             printf "%s\n" "$response"
