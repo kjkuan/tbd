@@ -7,6 +7,8 @@
     exit 1
 } >&2
 
+if which batcat >/dev/null 2>&1; then bat () { batcat "$@"; }; fi
+
 [[ ${TMUX:-} ]] || {
     echo "Please run TBD within a tmux session."
     exit 1
@@ -15,64 +17,77 @@
 TBD_ORIG_SET=${-/i}
 set +eu
 
-TBD_HELP=$(cat <<'EOF'
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Welcome to TBD, the Tiny Bash Debugger!
+if [[ ! ${NO_COLOR:-} ]]; then
+    TBD_NC='\e[0m'
+    TBD_LIGHTRED='\e[1;31m'
+    TBD_LIGHTGREEN='\e[1;32m'
+    TBD_LIGHTBLUE='\e[1;34m'
+    TBD_PROMPT_COLOR=${TBD_PROMPT_COLOR:-${TBD_LIGHTBLUE:-}}
+fi
 
-The '?' is the debugger prompt. '(N)' at the beginning of the prompt is the exit
-status of the previous command before entering the DEBUG trap. The line above it
+
+tbd-show-help () {
+    bat --decorations never  \
+        --italic-text always \
+        --color always ${NO_COLOR:+--color never} \
+        -l markdown <<'EOF'
+Welcome to _TBD_, the Tmux Bash Debugger!
+
+The `?` is the debugger prompt. `(N)` at the beginning of the prompt is the exit
+status of the previous command before entering the `DEBUG` trap. The line above it
 is the current command (not executed yet) the debugger is stepping on. What happens
-next depends on what you do at the prompt:
+next depends on what you do at the prompt.
 
-  Press 'Enter' alone to execute or step into the current command.
+Press `Enter` alone to execute or step into the current command, or enter one of the
+following built-in commands:
 
-  /help     - Show this help message.
-  /skip     - Skip the current command, resulting in a command status of 1.
-  /stepout  - Execute the rest of the function until it returns; ignores break points.
-  /resume   - Resume the script until the next break point or wherever 'tbd.sh' is
-              sourced next.
+* `/help`    Show this help message.
+* `/skip`    Skip the current command, resulting in a command status of 1.
+* `/stepout` Execute the rest of the function until it returns; ignores break points.
+* `/resume`  Resume the script until the next break point or wherever `tbd.sh` is
+             sourced next.
 
-  /set-breaks [[file_path:]<line_number> ...]
-        Set a break point at a specific 'line_number' of a given 'file_path', which
-        should be a value from '$BASH_SOURCE' (this is ususally same as '$0', i.e.,
-        the path used to invoke the script, but it might also be the path passed to
-        the 'source' command). If 'file_path' is ommitted, it's assumed to be the file
-        of the current line TBD is stepping on.
+* `/list-breaks`  List known break points.
 
-  /list-breaks
-        List known break points.
+* `/set-breaks [[file_path:]<line_number> ...]`
+  
+    Set a break point at a specific `line_number` of a given `file_path`, which
+    should be a value from `$BASH_SOURCE` (this is ususally same as `$0`, i.e.,
+    the path used to invoke the script, but it might also be the path passed to
+    the `source` command). If `file_path` is ommitted, it's assumed to be the file
+    of the current line _TBD_ is stepping on.
 
-  /unset-breaks [[file_path:]<line_number ...]
-        Remove the specified break points. If none is given, all break points will be
-        removed.
+* `/unset-breaks [[file_path:]<line_number> ...]`
+  
+    Remove the specified break points. If none is given, all break points will be
+    removed.
 
 Besides the built-in commands listed above, *ANY* shell commands can be run at
-the prompt; however, currently, TBD only reads and executes one single line at a time.
+the prompt; however, currently, _TBD_ only reads and executes one single line at a time.
 
 Any commands entered will be sent to the corresponding process and evaluated in the
 context / scope of the command that the debugger is currently stepping on, but with
-output sent to the TBD window.
+output sent to the _TBD_ window.
 
-You can redirect a command's output explicitly to '$TBD_OUT' and/or '$TBD_ERR', if
-you wish to send it to the script's STDOUT and/or STDERR, respectively. E.g.,
+You can redirect a command's output explicitly to `$TBD_OUT` and/or `$TBD_ERR`, if
+you wish to send it to the script's *STDOUT* and/or *STDERR*, respectively. E.g.,
 
     echo hello >&$TBD_OUT
 
-Finally, whenever a subshell is forked, TBD will switch to a new window in the current
+Finally, whenever a subshell is forked, _TBD_ will switch to a new window in the current
 tmux session. Such window will be closed automatically after the subshell terminates.
-'Ctrl-C' also terminates the current TBD tmux window or pane.
+`Ctrl-C` also terminates the current _TBD_ tmux window or pane.
 
 Tips:
-  - To "step over" a function invocation, step into (i.e., 'Enter') the function
-    first, then '/stepout'.
-  - Run 'local -p' inside a function to print its local variables.
-  - Run 'echo $BASH_COMMAND' to see the current command again.
+  - To "step over" a function invocation, step into (i.e., `Enter`) the function
+    first, then `/stepout`.
+  - Run `local -p` inside a function to print its local variables.
+  - Run `echo $BASH_COMMAND` to see the current command again.
   - You can set or change any local variables when inside a function.
-  - You can 'return' from a function, as well as,  'break' or 'continue' a loop.
-  - You can run a different command and then '/skip' the current command.
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  - You can `return` from a function, as well as,  `break` or `continue` a loop.
+  - You can run a different command and then `/skip` the current command.
 EOF
-)
+}
 
 declare -A TBD_BREAKS=()    # "file:lineno" -> "condition"  #TODO: allow conditial break points
 
@@ -87,12 +102,13 @@ tbd-init-window () {
         IFS=$'\n' read -d $'\0' -r TBD_{,VIEW_}PIPE TBD_WINDOW_ID <<<"$output"
 
         if [[ $$ == $BASHPID ]]; then
-            tbd-echo "$TBD_HELP"
+            tbd-show-help | tbd-cat
         fi
     fi
 }
 
 tbd-echo () { echo "$@" > "$TBD_PIPE" && tbd-recv-ack; }
+tbd-cat  () { cat > "$TBD_PIPE" && tbd-recv-ack; }
 
 tbd-recv-ack () {
     local fifo=${1:-${TBD_PIPE:?}}
@@ -105,13 +121,30 @@ tbd-recv-ack () {
 tbd-print-current-command () {
     echo "${BASH_SOURCE[1]}" > "$TBD_VIEW_PIPE" && tbd-recv-ack "$TBD_VIEW_PIPE"
     echo $TBD_LINENO         > "$TBD_VIEW_PIPE" && tbd-recv-ack "$TBD_VIEW_PIPE"
-    tbd-echo "${BASH_SOURCE[1]}:$TBD_LINENO: $BASH_COMMAND"
+    if (( TBD_RC != 0 )); then
+        local status=${TBD_LIGHTRED:-}${TBD_RC}${TBD_NC:-}
+    else
+        local status=${TBD_LIGHTGREEN:-}${TBD_RC}${TBD_NC:-}
+    fi
+    tbd-echo -e "${TBD_LIGHTBLUE:-}Exit status:${TBD_NC:-} $status"
+
+    tbd-cat <<EOF
+
+At ${BASH_SOURCE[1]}, line $TBD_LINENO:
+
+$(bat --decorations never  \
+      --color always ${NO_COLOR:+--color never} \
+      -l bash <<<"$BASH_COMMAND" \
+   | sed 's/^/    /'
+)
+  
+EOF
 }
 
 tbd-print-prompt () {
     local funcnames=$(IFS=\<; echo "${FUNCNAME[*]:1:${#FUNCNAME[*]}-2}")
     [[ $funcnames ]] && funcnames+='()' || funcnames=${0##*/}
-    tbd-echo -n "${TBD_PROMPT_PREFIX:?}($TBD_RC) [$BASHPID] $funcnames:$TBD_LINENO ? "
+    tbd-echo -en "${TBD_PROMPT_PREFIX:?}${TBD_PROMPT_COLOR:-}[$BASHPID] $funcnames:$TBD_LINENO ? ${TBD_NC:-}"
 }
 
 tbd-return () { return $1; }
@@ -194,7 +227,7 @@ if [[ ! ${TBD_RESUMING:-} || ${TBD_BREAKS[$BASH_SOURCE:$TBD_LINENO]:-} ]]; then
                      TBD_RC=0; break
                      ;;
 
-                 /help) tbd-echo "$TBD_HELP"; continue ;;
+                 /help) tbd-show-help | tbd-cat; continue ;;
             esac
 
             IFS=' '$'\t'$'\n' read -r TBD_CMD_1 TBD_CMD_2 <<<"$TBD_CMD"
