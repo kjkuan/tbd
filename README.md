@@ -1,5 +1,5 @@
 ## What is it?
-_TBD_ (Tiny Bash Debugger) is a simple debugger for Bash that can be used to
+_TBD_ (Tmux Bash Debugger) is a simple debugger for Bash that can be used to
 interactively inspect or debug the execution of a Bash script. It's meant to be
 `source`'ed into your script at the place where you want a break point to be set.
 Once at the break point, _TBD_ will take over and run in a separate _tmux_ window,

@@ -61,7 +61,7 @@ view-source-pane () {
         while true; do
             file=$(cat "$pipe") && fifo-ack "$pipe"
             read -t2 -r from to < "$pipe" && fifo-ack "$pipe"
-            bat --color always \
+            bat --color always ${NO_COLOR:+--color never} \
                 --highlight-line "$from:${to:-$from}" "$file" \
                 | less -K -RX +${from}g
         done
@@ -74,6 +74,7 @@ set -eo pipefail
 
 $(declare -f fifo-ack)
 $(declare -f source-viewer)
+$(if [[ ${NO_COLOR:-} ]]; then echo export NO_COLOR=x; fi)
 
 trap 'rm -f "\$0"' EXIT
 
@@ -93,6 +94,7 @@ cat > "$repl_script" <<EOF
 set -e
 
 $(declare -p tbd_pid prompt_prefix tbd_pipe view_pipe window_id)
+$(if [[ ${NO_COLOR:-} ]]; then echo export NO_COLOR=x; fi)
 
 $(declare -f fifo-ack)
 $(declare -f view-source-pane)
