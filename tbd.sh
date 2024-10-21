@@ -168,10 +168,9 @@ tbd-set-break () {
         echo "Invalid line number: $lineno"
         return
     }
-    [[ -e $path ]] || {
-        echo "File not found: $path"
-        return
-    }
+    [[ -e $path ]] || echo "Warning: File not found: $path"
+    # NOTE: This is only a warning because if the current working directory might have changed.
+
     TBD_BREAKS[$path:$lineno]=$cond
 }
 
