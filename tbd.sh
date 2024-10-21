@@ -47,9 +47,7 @@ following built-in commands:
 * `/resume`  Resume the script until the next break point or wherever `tbd.sh` is
              sourced next.
 
-* `/list-breaks`  List known break points.
-
-* `/set-breaks [[file_path:]<line_number> ...]`
+* `/set-break [file_path:]<line_number> [condition]`
   
     Set a break point at a specific `line_number` of a given `file_path`, which
     should be a value from `$BASH_SOURCE` (this is ususally same as `$0`, i.e.,
@@ -57,10 +55,17 @@ following built-in commands:
     the `source` command). If `file_path` is ommitted, it's assumed to be the file
     of the current line _TBD_ is stepping on.
 
-* `/unset-breaks [[file_path:]<line_number> ...]`
+    A `condition`, which is a string to be `eval`'ed at the break point, can be
+    specified. The break point will only be activated when the `condition` exits
+    with a status of `0`.
+
+* `/list-breaks`  List known break points. The indexes in the first column can be
+                  used as arguments to the `/unset-breaks` command.
+
+* `/unset-breaks [index_1 index_2 ...]`
   
-    Remove the specified break points. If none is given, all break points will be
-    removed.
+    Remove the specified break points given the indexes shown by `/list-breaks`.
+    If none is given, all break points will be removed.
 
 Besides the built-in commands listed above, *ANY* shell commands can be run at
 the prompt; however, currently, _TBD_ only reads and executes one single line at a time.
@@ -86,10 +91,11 @@ Tips:
   - You can set or change any local variables when inside a function.
   - You can `return` from a function, as well as,  `break` or `continue` a loop.
   - You can run a different command and then `/skip` the current command.
+  - Use `Ctrl-l` to clear the REPL pane.
 EOF
 }
 
-declare -A TBD_BREAKS=()    # "file:lineno" -> "condition"  #TODO: allow conditial break points
+declare -A TBD_BREAKS=()    # "file:lineno" -> "condition"
 
 declare -A TBD_SUBSHELL=()  # $BASHPID -> x
 
@@ -137,7 +143,7 @@ $(bat --decorations never  \
       -l bash <<<"$BASH_COMMAND" \
    | sed 's/^/    /'
 )
-  
+
 EOF
 }
 
@@ -149,116 +155,130 @@ tbd-print-prompt () {
 
 tbd-return () { return $1; }
 
-tbd-set-breaks () {
-    local break path lineno
-    for break in "$@"; do
-        lineno=${break##*:}
-        if [[ break == *:* ]]; then
-            path=${break%:*}
-        else
-            path=${BASH_SOURCE[1]}
-        fi
-        TBD_BREAKS[$path:$lineno]=x
-    done
+tbd-set-break () {
+    local break=${1:-} cond=${2:-true}
+    local lineno=${break##*:} path
+    if [[ $break == *:* ]]; then
+        path=${break%:*}
+    else
+        path=${BASH_SOURCE[1]}
+    fi
+
+    printf %d "$lineno" >/dev/null 2>&1 && (( $lineno > 0 )) || {
+        echo "Invalid line number: $lineno"
+        return
+    }
+    [[ -e $path ]] || echo "Warning: File not found: $path"
+    # NOTE: This is only a warning because if the current working directory might have changed.
+
+    TBD_BREAKS[$path:$lineno]=$cond
 }
 
 tbd-unset-breaks () {
-    local break path lineno
+    local has_glob=; [[ $- == *f* ]] && { has_glob=x; set -f; }
+    local breaks=($(echo "${!TBD_BREAKS[@]}" | sort -t: -k1,1 -nk2,2))
+    [[ $fglob ]] && set +f
     if (( $# )); then
-        for break in "$@"; do
-            lineno=${break##*:}
-            if [[ break == *:* ]]; then
-                path=${break%:*}
-            else
-                path=${BASH_SOURCE[1]}
-            fi
-            unset "TBD_BREAKS[$path:$lineno]"
+        local i break
+        for i in "$@"; do
+            break=${breaks[i]}
+            [[ $break ]] || continue
+            unset "TBD_BREAKS[$break]"
         done
     else
         TBD_BREAKS=()
     fi
 }
 
-tbd-list-breaks () (IFS=$'\n'; echo "${!TBD_BREAKS[*]}")
+tbd-list-breaks () (
+    local has_glob=; [[ $- == *f* ]] && { has_glob=x; set -f; }
+    local breaks=($(echo "${!TBD_BREAKS[@]}" | sort -t: -k1,1 -nk2,2))
+    [[ $fglob ]] && set +f
+    local i
+    for ((i=0; i < ${#breaks[*]}; i++)); do
+        printf "%2d %s\t%s\n" $i "${breaks[i]}" "${TBD_BREAKS[${breaks[i]}]}"
+    done
+)
 
+tbd-debug-trap () {
+    if [[ ! ${TBD_RESUMING:-} ]] || eval "${TBD_BREAKS[$BASH_SOURCE:$TBD_LINENO]:-false}"; then
+        TBD_RESUMING=
 
-TBD_DEBUG_TRAP=$(cat <<'EOF'
-TBD_RC=$?; TBD_LINENO=$LINENO; tbd-init-window
+        if [[ ! ${TBD_RETURN_TRAP:-} ]]; then
 
-if [[ ! ${TBD_RESUMING:-} || ${TBD_BREAKS[$BASH_SOURCE:$TBD_LINENO]:-} ]]; then
-    TBD_RESUMING=
+            tbd-print-current-command
 
-    if [[ ! ${TBD_RETURN_TRAP:-} ]]; then
+            while true; do
+                tbd-print-prompt
+                IFS= read -t2 -r TBD_CMD < "$TBD_PIPE"
+                if [[ $? != 0 ]]; then TBD_CMD=/resume; fi
 
-        tbd-print-current-command
+                case $TBD_CMD in
+                        *) tmux send-keys -t ":$TBD_WINDOW_ID.right" q ;;&
+                        "") TBD_RC=0; break ;;
+                    /skip) TBD_RC=1; break ;;
 
-        while true; do
-            tbd-print-prompt
-            IFS= read -t2 -r TBD_CMD < "$TBD_PIPE"
-            if [[ $? != 0 ]]; then TBD_CMD=/resume; fi
+                    /set-break\ *)   TBD_CMD=tbd-${TBD_CMD#/} ;;
+                    /unset-breaks\ *) TBD_CMD=tbd-${TBD_CMD#/} ;;
+                    /list-breaks)     TBD_CMD=tbd-${TBD_CMD#/} ;;
 
-            case $TBD_CMD in
-                     *) tmux send-keys -t ":$TBD_WINDOW_ID.right" q ;;&
-                    "") TBD_RC=0; break ;;
-                 /skip) TBD_RC=1; break ;;
+                    /stepout)
+                        (( ${#FUNCNAME[*]} > 1 )) || {
+                            tbd-echo "Error: Not in a function."
+                            continue
+                        }
+                        TBD_DEBUG_TRAP=$(trap -p DEBUG); trap DEBUG; set +T
+                        trap '
+                            TBD_RETURN_TRAP=$FUNCNAME
+                            set -T; eval "$TBD_DEBUG_TRAP"; trap RETURN
+                        ' RETURN
+                        TBD_RC=0; break
+                        ;;
 
-                 /set-breaks\ *)   TBD_CMD=tbd-${TBD_CMD#/} ;;
-                 /unset-breaks\ *) TBD_CMD=tbd-${TBD_CMD#/} ;;
-                 /list-breaks)     TBD_CMD=tbd-${TBD_CMD#/} ;;
+                    /resume)
+                        TBD_RESUMING=x
+                        if ! (( ${#TBD_BREAKS[*]} )); then
+                            trap DEBUG; shopt -u extdebug; set -$TBD_ORIG_SET
+                        fi
+                        TBD_RC=0; break
+                        ;;
 
-                 /stepout)
-                     (( ${#FUNCNAME[*]} > 1 )) || {
-                         tbd-echo "Error: Not in a function."
-                         continue
-                     }
-                     TBD_DEBUG_TRAP=$(trap -p DEBUG); trap DEBUG; set +T
-                     trap '
-                         TBD_RETURN_TRAP=$FUNCNAME
-                         set -T; eval "$TBD_DEBUG_TRAP"; trap RETURN
-                     ' RETURN
-                     TBD_RC=0; break
-                     ;;
+                    /help) tbd-show-help | tbd-cat; continue ;;
+                esac
 
-                 /resume)
-                     TBD_RESUMING=x
-                     if ! (( ${#TBD_BREAKS[*]} )); then
-                         trap DEBUG; shopt -u extdebug; set -$TBD_ORIG_SET
-                     fi
-                     TBD_RC=0; break
-                     ;;
+                IFS=' '$'\t'$'\n' read -r TBD_CMD_1 TBD_CMD_2 <<<"$TBD_CMD"
+                case $TBD_CMD_1 in
+                    break|continue)
+                        eval "$TBD_CMD_1 $(( ${TBD_CMD_2:-1} + 1 ))"
+                        #FIXME: redirect stderr to a file and ship that log to the repl later
+                        ;;
+                    return)
+                        (( ${#FUNCNAME[*]} > 1 )) || {
+                            tbd-echo "Error: Not in a function."
+                            continue
+                        }
+                        eval "$TBD_CMD"
+                        #FIXME: redirect stderr to a file and ship that log to the repl later
+                        ;;
+                esac
 
-                 /help) tbd-show-help | tbd-cat; continue ;;
-            esac
+                [[ ! ${TBD_OUT:-} ]] || eval exec "$TBD_OUT>&-"
+                [[ ! ${TBD_ERR:-} ]] || eval exec "$TBD_ERR>&-"
 
-            IFS=' '$'\t'$'\n' read -r TBD_CMD_1 TBD_CMD_2 <<<"$TBD_CMD"
-            case $TBD_CMD_1 in
-                break|continue)
-                    eval "$TBD_CMD_1 $(( ${TBD_CMD_2:-1} + 1 ))"
-                    #FIXME: redirect stderr to a file and ship that log to the repl later
-                    ;;
-                return)
-                    (( ${#FUNCNAME[*]} > 1 )) || {
-                        tbd-echo "Error: Not in a function."
-                        continue
-                    }
-                    eval "$TBD_CMD"
-                    #FIXME: redirect stderr to a file and ship that log to the repl later
-                    ;;
-            esac
-
-            [[ ! ${TBD_OUT:-} ]] || eval exec "$TBD_OUT>&-"
-            [[ ! ${TBD_ERR:-} ]] || eval exec "$TBD_ERR>&-"
-
-            set +T; {TBD_OUT}>&1 {TBD_ERR}>&2 >"$TBD_PIPE" 2>&1 eval "$TBD_CMD"; set -T
-            tbd-recv-ack "$TBD_PIPE"
-        done
-        tbd-return ${TBD_RC:-0}
-    else
-        TBD_RETURN_TRAP=
+                set +T; {TBD_OUT}>&1 {TBD_ERR}>&2 >"$TBD_PIPE" 2>&1 eval "$TBD_CMD"; set -T
+                tbd-recv-ack "$TBD_PIPE"
+            done
+            tbd-return ${TBD_RC:-0}
+        else
+            TBD_RETURN_TRAP=
+        fi
     fi
-fi
+}
 
-EOF
+
+TBD_DEBUG_TRAP=$(
+    echo 'TBD_RC=$?; TBD_LINENO=$LINENO; tbd-init-window'
+    declare -pf tbd-debug-trap | sed '1,2d;$d'
 )
 
 
