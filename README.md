@@ -14,9 +14,9 @@ possible to debug a shell pipeline, which could have multiple subshells running
 as parallel processes.
 
 Multiple and conditional break points are possible by sourcing _TBD_ multiple
-times in the script. Setting break points at runtime is also possible with the
-caveat that a break point set from a subshell on its parent process will have no
-effects.
+times in the script. Setting conditional break points at runtime is also possible
+with the caveat that a break point set from a subshell on its parent process will
+have no effects.
 
 See the [examples/fizzbuzz](examples/fizzbuzz) script and `/help` for details.
 
