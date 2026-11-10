@@ -44,11 +44,15 @@ main () {
     view-source-pane
 
     HISTFILE=$HOME/.tbd_history; history -r || true
-    local line response rc
+    local line response prompt rc
     while true; do
         response=$(cat "$tbd_pipe") && fifo-ack
         if [[ $response == "$prompt_prefix"* ]]; then
-            IFS= read -erp "${response#$prompt_prefix}" line || rc=$?
+            # Mark the color escapes in the prompt as non-printing for readline
+            # (\001 ... \002), or it miscounts the prompt's width and garbles
+            # input lines that wrap.
+            prompt=$(printf %s "${response#"$prompt_prefix"}" | sed $'s/\e\\[[0-9;]*m/\001&\002/g')
+            IFS= read -erp "$prompt" line || rc=$?
             [[ ! $line ]] || history -s "$line"
             [[ ${rc:-0} == 0 ]] || break  # NOTE: Exiting the loop on Ctrl-D could potentially make the debugged script stuck on a break point.
             echo "$line" > "$tbd_pipe"
