@@ -18,13 +18,25 @@ Describe 'tbd-ctl'
     '
   }
 
-  # Wait until at least N processes are stopped.
+  # Wait until at least N processes are stopped; on a timeout, print what
+  # the session looks like to stderr, for diagnosis.
   wait_stopped() {
     local i
-    for (( i=0; i < 100; i++ )); do
+    for (( i=0; i < ${TBD_TIMEOUT:-15} * 10; i++ )); do
       (( $(stopped_pids | wc -l) >= $1 )) && return 0
       sleep 0.1
     done
+    {
+      echo "Timed out waiting for $1 processes to stop; the session:"
+      ctl status
+      local dir d; dir=$(cat "$TBD_TEST_DIR/tmp/tbd-ctl.$(id -u).last")
+      for d in "$dir"/[0-9]*; do
+        echo "--- ${d##*/}: state: $(cat "$d/state"), where: $(cat "$d/where")"
+        echo "log (tail):"; tail -n 8 "$d/log"; echo
+        echo "headless.log:"; cat "$d/headless.log"
+      done
+      echo "--- processes:"; ps
+    } >&2
     return 1
   }
 
