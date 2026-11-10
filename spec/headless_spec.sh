@@ -491,7 +491,9 @@ EOF
 
     It 'rejects commands to processes that are not stopped or unknown'
       scenario() {
-        printf '%s\n' '#!/usr/bin/env bash' 'source tbd.sh' 'sleep 2' 'echo slept' > "$TBD_WORK/slow.sh"
+        # NOTE: Sleep long enough that it's still running when we send
+        # commands to it below, even on a slow machine.
+        printf '%s\n' '#!/usr/bin/env bash' 'source tbd.sh' 'sleep 5' 'echo slept' > "$TBD_WORK/slow.sh"
         chmod +x "$TBD_WORK/slow.sh"
         cd "$TBD_WORK" || return
         ctl run ./slow.sh >/dev/null
