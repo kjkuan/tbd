@@ -8,6 +8,7 @@ Once at the break point, _TBD_ will take over and run in a separate _tmux_ windo
 from which you can interact and explore the execution environment of the script.
 
 > **NOTE:** _TBD_ temporarily `set +eu` for the duration of a debugging session.
+> See also [Caveats](#caveats).
 
 _TBD_ uses separate _tmux_ windows as debugging REPLs; one for the script's
 process, and one for each subshell created by the script. This not only leaves
@@ -105,6 +106,27 @@ It's also how to point an AI agent at it: tell it to read `tbd-ctl --help`.
 Under the hood, setting `TBD_HEADLESS` to a directory makes `tbd.sh` start
 `tbd-headless`, instead of `tbd-view`, which keeps the debugger's state in files
 under that directory, and takes commands from a FIFO there.
+
+
+## Caveats
+_TBD_ runs in the process of the script being debugged (in its `DEBUG` trap), so
+it takes care not to change the script's state: e.g., `$?`, `$_`, `PIPESTATUS`,
+`BASH_REMATCH`, `REPLY`, `IFS`, `RANDOM`'s sequence, the `ERR` and `RETURN`
+traps, and the open file descriptors are all preserved across a stop. Still,
+while a script is being debugged:
+
+- `extdebug` is on, which also turns on `errtrace` and `functrace` (`set -ET`); so
+  the script's `ERR` and `RETURN` traps are inherited by its functions and
+  subshells, and `BASH_ARGV` / `BASH_ARGC` are set. These are restored once you
+  `/resume` with no break points left.
+- `errexit` and `nounset` are off (`set +eu`), as noted above, except where the
+  script turns them back on itself.
+- _TBD_'s own variables (`TBD_*`) and functions (`tbd-*`) are defined in the
+  script.
+- `/stepout` uses the `RETURN` trap; the script's own `RETURN` trap is restored
+  when the function returns.
+- On Bash 4.4 and 5.0, `PIPESTATUS` isn't preserved across a stop (fixed in Bash 5.1).
+- `tbd-ctl run` adds _TBD_'s directory to the front of the script's `PATH`.
 
 
 ## Running Tests
