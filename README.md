@@ -46,3 +46,18 @@ a _tmux_ window; follow the on-screen help, or enter `/help`, for instructions.
 See also the [demo] above.
 
 [demo]: https://asciinema.org/a/btQpdrIcFKJuqgsARFvp7LEXY
+
+
+## Running Tests
+The tests are end-to-end specs written with [ShellSpec]; they drive _TBD_ in
+isolated, detached _tmux_ servers, so they don't touch your _tmux_ session, though
+they still need `tmux`, `bat`, and `less` in `PATH`. To run them:
+
+```bash
+shellspec
+```
+
+Set `TBD_TIMEOUT` (in seconds, default 15) to change how long a spec waits for
+the debugger before failing.
+
+[ShellSpec]: https://github.com/shellspec/shellspec
