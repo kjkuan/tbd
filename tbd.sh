@@ -224,6 +224,9 @@ tbd-debug-trap () {
 
         if [[ ! ${TBD_RETURN_TRAP:-} ]]; then
 
+            # Only open a debugger window when we actually stop here, so that
+            # subshells running while resuming don't each pop up a window.
+            tbd-init-window
             tbd-print-current-command
 
             while true; do
@@ -295,7 +298,7 @@ tbd-debug-trap () {
 
 
 TBD_DEBUG_TRAP=$(
-    echo 'TBD_RC=$?; TBD_LINENO=$LINENO; tbd-init-window'
+    echo 'TBD_RC=$?; TBD_LINENO=$LINENO'
     declare -pf tbd-debug-trap | sed '1,2d;$d'
 )
 
