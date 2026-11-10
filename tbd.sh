@@ -229,6 +229,7 @@ tbd-debug-trap () {
             # subshells running while resuming don't each pop up a window.
             tbd-init-window
             tbd-print-current-command
+            TBD_VIEWING=x
 
             while true; do
                 tbd-print-prompt
@@ -236,7 +237,12 @@ tbd-debug-trap () {
                 if [[ $? != 0 ]]; then TBD_CMD=/resume; fi
 
                 case $TBD_CMD in
-                        *) tmux send-keys -t ":$TBD_WINDOW_ID.right" q ;;&
+                        # Quit the source viewer's pager (once per stop), so that
+                        # it's ready to show the next stop.
+                        *) [[ ! ${TBD_VIEWING:-} ]] || {
+                               tmux send-keys -t ":$TBD_WINDOW_ID.right" q
+                               TBD_VIEWING=
+                           } ;;&
                         "") TBD_RC=0; break ;;
                     /skip) TBD_RC=1; break ;;
 
