@@ -2,17 +2,32 @@
 
 [[ ! "$(trap -p DEBUG)" ]] || return 0
 
-{ { which batcat || which bat; } && which less tmux; } >/dev/null 2>&1 || {
-    echo "Please make sure 'bat' / 'batcat', 'less', and 'tmux' are in PATH!"
-    exit 1
-} >&2
+# If we're loaded via BASH_ENV (e.g., by `tbd-ctl run -s`), don't let it
+# load TBD into other Bash processes started by the script.
+if [[ ${BASH_ENV:-} && ${BASH_ENV:-} -ef ${BASH_SOURCE[0]} ]]; then
+    unset BASH_ENV
+    TBD_VIA_BASH_ENV=x
+fi
 
-if which batcat >/dev/null 2>&1; then bat () { batcat "$@"; }; fi
+# In headless mode (see tbd-headless and tbd-ctl), TBD_HEADLESS is the
+# directory to keep the debugging session's state in; no tmux needed.
+if [[ ${TBD_HEADLESS:-} ]]; then
+    [[ $TBD_HEADLESS == /* ]] || TBD_HEADLESS=$PWD/$TBD_HEADLESS
+    TBD_NO_COLOR=x
+else
+    { { which batcat || which bat; } && which less tmux; } >/dev/null 2>&1 || {
+        echo "Please make sure 'bat' / 'batcat', 'less', and 'tmux' are in PATH!"
+        exit 1
+    } >&2
 
-[[ ${TMUX:-} ]] || {
-    echo "Please run TBD within a tmux session."
-    exit 1
-} >&2
+    if which batcat >/dev/null 2>&1; then bat () { batcat "$@"; }; fi
+
+    [[ ${TMUX:-} ]] || {
+        echo "Please run TBD within a tmux session."
+        exit 1
+    } >&2
+    TBD_NO_COLOR=${NO_COLOR:-}
+fi
 
 TBD_ORIG_SET=${-/i}
 TBD_ORIG_PWD=${TBD_ORIG_PWD:-$PWD}
@@ -21,9 +36,9 @@ set +eu
 # NOTE: The script being debugged might have changed IFS, so avoid relying
 # on word splitting in any code that runs in the script's context.
 
-if [[ ${NO_COLOR:-} ]]; then TBD_BAT_COLOR=never; else TBD_BAT_COLOR=always; fi
+if [[ $TBD_NO_COLOR ]]; then TBD_BAT_COLOR=never; else TBD_BAT_COLOR=always; fi
 
-if [[ ! ${NO_COLOR:-} ]]; then
+if [[ ! $TBD_NO_COLOR ]]; then
     TBD_NC='\e[0m'
     TBD_LIGHTRED='\e[1;31m'
     TBD_LIGHTGREEN='\e[1;32m'
@@ -109,12 +124,17 @@ declare -A TBD_SUBSHELL=()  # $BASHPID -> x
 tbd-init-window () {
     if [[ ! ${TBD_VIEW_PIPE:-} ]] || [[ $$ != $BASHPID && ! ${TBD_SUBSHELL[$BASHPID]:-} ]]; then
         TBD_PROMPT_PREFIX=$BASHPID.$RANDOM$RANDOM
-        local output; output=$(tbd-view "$TBD_PROMPT_PREFIX")
+        local output
+        if [[ ${TBD_HEADLESS:-} ]]; then
+            output=$(tbd-headless "$TBD_PROMPT_PREFIX")
+        else
+            output=$(tbd-view "$TBD_PROMPT_PREFIX")
+        fi
         TBD_SUBSHELL[$BASHPID]=x
 
         IFS=$'\n' read -d $'\0' -r TBD_{,VIEW_}PIPE TBD_WINDOW_ID <<<"$output"
 
-        if [[ $$ == $BASHPID ]]; then
+        if [[ $$ == $BASHPID && ! ${TBD_HEADLESS:-} ]]; then
             tbd-show-help | tbd-cat
         fi
     fi
@@ -133,6 +153,9 @@ tbd-recv-ack () {
 }
 
 tbd-print-current-command () {
+    # NOTE: Save it before running any other commands, which could change it.
+    local cmd=$BASH_COMMAND
+
     # Relative source paths are relative to where the script started, not to
     # its current directory (it might have cd'ed) nor to the viewer pane's.
     local src=${BASH_SOURCE[1]}
@@ -151,15 +174,21 @@ tbd-print-current-command () {
     fi
     tbd-echo -e "${TBD_LIGHTBLUE:-}Exit status:${TBD_NC:-} $status"
 
+    # NOTE: Keep compound commands (if, [[ ]], etc.) out of command
+    # substitutions in code run from the DEBUG trap; the trap can fire for
+    # them in the subshell (with function tracing on), which would recurse.
+    local code
+    if [[ ${TBD_HEADLESS:-} ]]; then
+        code=$(sed 's/^/    /' <<<"$cmd")
+    else
+        code=$(bat --decorations never --color "$TBD_BAT_COLOR" -l bash <<<"$cmd" | sed 's/^/    /')
+    fi
+
     tbd-cat <<EOF
 
 At ${BASH_SOURCE[1]}, line $TBD_LINENO:
 
-$(bat --decorations never  \
-      --color "$TBD_BAT_COLOR" \
-      -l bash <<<"$BASH_COMMAND" \
-   | sed 's/^/    /'
-)
+$code
 
 EOF
 }
@@ -235,7 +264,7 @@ tbd-debug-trap () {
             # subshells running while resuming don't each pop up a window.
             tbd-init-window
             tbd-print-current-command
-            TBD_VIEWING=x
+            [[ ${TBD_HEADLESS:-} ]] || TBD_VIEWING=x
 
             while true; do
                 tbd-print-prompt
@@ -326,9 +355,17 @@ tbd-debug-trap () {
 
 TBD_DEBUG_TRAP=$(
     echo 'TBD_RC=$?; TBD_LINENO=$LINENO'
+    # Enabling extdebug while Bash is still reading its startup files (e.g.,
+    # BASH_ENV) makes it try to load the bashdb debugger, and fail. So, in
+    # that case, enable it from the DEBUG trap; i.e., once the script starts.
+    [[ ! ${TBD_VIA_BASH_ENV:-} ]] || echo 'shopt -s extdebug'
     declare -pf tbd-debug-trap | sed '1,2d;$d'
 )
 
 
-shopt -s extdebug
+if [[ ${TBD_VIA_BASH_ENV:-} ]]; then
+    set -T  # so that the DEBUG trap is inherited until extdebug is enabled
+else
+    shopt -s extdebug
+fi
 trap "$TBD_DEBUG_TRAP" DEBUG

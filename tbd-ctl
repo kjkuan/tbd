@@ -1,0 +1,306 @@
+#!/usr/bin/env bash
+#
+# tbd-ctl - Drive TBD headlessly; e.g., from an AI agent or a program.
+#
+set -o pipefail
+
+PROG=${0##*/}
+TBD_ROOT=$(cd "$(dirname "$(readlink -f "$0")")" && pwd)
+
+usage () {
+    cat <<EOF
+Usage: $PROG [-d DIR] [-t SECONDS] <command> [args...]
+
+Debug a Bash script with TBD without tmux or a terminal. Every command returns
+promptly with plain-text results, so it's suitable for AI agents and programs.
+
+Commands:
+  run [-s] <script> [args...]
+        Start debugging a script in the background, and wait for it to stop
+        at a break point. The script should 'source tbd.sh' where it should
+        stop; or, with -s, it stops at the first command of the script,
+        even if it doesn't source tbd.sh.
+
+  status
+        Show the debugged processes (the script and its subshells) and where
+        the stopped ones are stopped at.
+
+  send <pid> <command line>
+        Enter a command line at the debugger prompt of a stopped process,
+        and wait until a process stops (again) or the script exits. Prints the
+        command's output, then the status. The command line can be any Bash
+        command, evaluated in the scope of where the process is stopped (e.g.,
+        'echo "\$var"', 'local -p', 'declare -p FUNCNAME'), or a debugger
+        command:
+
+          /skip                      Skip the current command.
+          /stepout                   Run until the current function returns.
+          /resume                    Run until the next break point.
+          /set-break [file:]<line> [condition]
+                                     Set a break point; the condition, if
+                                     any, is the rest of the line, eval'ed
+                                     at the break point.
+          /list-breaks               List the break points.
+          /unset-breaks [index...]   Remove some or all break points.
+
+        Break points are per process; a subshell inherits those of its
+        parent when it's forked.
+
+        NOTE: In a subshell, an expansion error (e.g., an invalid arithmetic
+        expression like \$(( 10# ))) in a command line ends the subshell;
+        that's how Bash works.
+
+  step <pid>
+        Execute (or step into) the current command of a stopped process.
+        Same as: send <pid> ''
+
+  resume <pid>
+        Same as: send <pid> /resume
+
+  wait  Wait until a process stops or the script exits; then show the status.
+
+  output
+        Show the script's output (stdout and stderr) so far.
+
+  log <pid>
+        Show the transcript of the debugger session of a process.
+
+  kill  Kill the script, along with its subshells.
+
+  end   Kill the script if it's still running, and remove the session's files.
+
+Options:
+  -d DIR      The session directory, as printed by 'run'. Defaults to
+              \$TBD_CTL_DIR, or else the session last started by 'run'.
+  -t SECONDS  How long to wait for a process to stop (default: 10). On a
+              timeout, the status is shown, and the script keeps running.
+
+Each process is identified by its PID, as shown in the debugger prompt, e.g.,
+"[1234] main():12 ?" is the prompt of process 1234 stopped at line 12 in the
+main function. A subshell (e.g., a side of a pipeline, or a command
+substitution) is a separate process, which stops on its own.
+
+Example:
+  \$ $PROG run -s ./myscript.sh arg1
+  \$ $PROG step 1234
+  \$ $PROG send 1234 'echo "\$count"'
+  \$ $PROG send 1234 '/set-break 42 [[ \$count -gt 3 ]]'
+  \$ $PROG resume 1234
+  \$ $PROG end
+EOF
+}
+
+die () { echo "$PROG: $*" >&2; exit 1; }
+
+DIR=${TBD_CTL_DIR:-}
+TIMEOUT=10
+LAST=${TMPDIR:-/tmp}/tbd-ctl.$(id -u).last
+
+
+# ---- Session helpers ----
+
+find-session () {
+    [[ $DIR ]] || DIR=$(cat "$LAST" 2>/dev/null) || true
+    [[ $DIR && -d $DIR ]] ||
+        die "No debugging session found; start one with: $PROG run <script>"
+}
+
+pids () {
+    local d
+    for d in "$DIR"/[0-9]*/; do
+        [[ -e $d/state ]] && { d=${d%/}; echo "${d##*/}"; }
+    done
+}
+
+# Print "<running|stopped|exited> <stops>" for a process.
+state () {
+    local state stops
+    read -r state stops < "$DIR/$1/state" 2>/dev/null || { echo "exited 0"; return; }
+    # The process might have exited before its state got updated.
+    kill -0 "$1" 2>/dev/null || state=exited
+    echo "$state $stops"
+}
+
+# Print "<pid> <state> <stops>" for each process.
+snapshot () {
+    local pid
+    for pid in $(pids); do echo "$pid $(state "$pid")"; done
+}
+
+script-pid () { cat "$DIR/script.pid" 2>/dev/null; }
+
+script-running () {
+    local pid; pid=$(script-pid) || return 1
+    [[ ! -e $DIR/script.status ]] && kill -0 "$pid" 2>/dev/null
+}
+
+# Print the PIDs of the processes that have stopped since a snapshot.
+new-stops () {
+    local snapshot=$1 pid state stops old
+    while read -r pid state stops; do
+        [[ $state == stopped ]] || continue
+        old=$(awk -v pid="$pid" '$1 == pid { print $3 }' <<<"$snapshot")
+        (( stops > ${old:-0} )) && echo "$pid"
+    done < <(snapshot)
+}
+
+# Wait until a process stops since the snapshot, or the script exits.
+wait-for-stop () {
+    local snapshot=$1 i
+    for (( i=0; i < TIMEOUT * 10; i++ )); do
+        [[ $(new-stops "$snapshot") ]] && return 0
+        if ! script-running; then
+            # A script not started by `run` has no script.pid; consider it
+            # done once all of its processes have exited.
+            [[ -e $DIR/script.status || -e $DIR/script.pid ]] && return 0
+            [[ $(pids) ]] && ! grep -qv '^[0-9]* exited' <(snapshot) && return 0
+        fi
+        sleep 0.1
+    done
+    echo "(Timed out after ${TIMEOUT}s waiting for a process to stop.)"
+    echo
+    return 1
+}
+
+show-stop () {
+    local pid=$1 where prompt func rc
+    where=$(cat "$DIR/$pid/where" 2>/dev/null)
+    prompt=$(cat "$DIR/$pid/prompt" 2>/dev/null)
+    func=${prompt#"[$pid] "}; func=${func%:* \?*}
+    rc=$(sed -n 's/^Exit status: *//p' "$DIR/$pid/stop")
+    echo "[$pid] stopped at ${where:-?} in $func (last exit status: ${rc:-?}); next command:"
+    # The command is indented by 4 spaces in the stop description.
+    sed -n '/^At .*, line [0-9]*:$/,$ { /^    /p }' "$DIR/$pid/stop"
+}
+
+show-status () {
+    local pid state stops shown=
+    while read -r pid state stops; do
+        case $state in
+            stopped) show-stop "$pid"; shown=x ;;
+            running) echo "[$pid] running"; shown=x ;;
+        esac
+    done < <(snapshot)
+
+    if [[ -e $DIR/script.status ]]; then
+        echo "The script exited with status $(cat "$DIR/script.status"); see its output with: $PROG output"
+    elif script-running; then
+        [[ $shown ]] || echo "The script (pid $(script-pid)) is running; no process is stopped."
+    elif [[ ! -e $DIR/script.pid && ! $shown ]]; then
+        echo "No debugged process is running."
+    fi
+}
+
+
+# ---- Commands ----
+
+cmd-run () {
+    local inject=
+    while [[ ${1:-} == -* ]]; do
+        case $1 in
+            -s) inject=x; shift ;;
+            --) shift; break ;;
+             *) die "run: Unknown option: $1" ;;
+        esac
+    done
+    (( $# )) || die "run: Missing the script to run."
+
+    DIR=$(mktemp -d "${TMPDIR:-/tmp}/tbd-ctl.XXXXXXXX") || exit 1
+    echo "$DIR" > "$LAST"
+
+    local -a env=(TBD_HEADLESS="$DIR" PATH="$TBD_ROOT:$PATH")
+    [[ ! $inject ]] || env+=(BASH_ENV="$TBD_ROOT/tbd.sh")
+
+    # Run it in the background, in its own process group (with job control
+    # on), so that `kill` can kill it along with its subshells, and so that
+    # it survives signals sent to our process group once we've returned.
+    set -m
+    bash -c '
+        echo $$ > "$0/script.pid"
+        env "${@:2:$1}" "${@:$1+2}" >"$0/script.out" 2>&1 </dev/null
+        echo $? > "$0/script.status"
+    ' "$DIR" "${#env[@]}" "${env[@]}" "$@" </dev/null >/dev/null 2>&1 &
+    set +m
+
+    echo "Session: $DIR"
+    local i; for (( i=0; i < 50; i++ )); do [[ -e $DIR/script.pid ]] && break; sleep 0.1; done
+    echo "Script: $* (pid $(script-pid))"
+    echo
+    wait-for-stop ""
+    show-status
+}
+
+cmd-status () { show-status; }
+
+cmd-wait () {
+    [[ $(new-stops "") ]] || wait-for-stop "$(snapshot)"
+    show-status
+}
+
+cmd-send () {
+    local pid=${1:-}; shift || true
+    [[ $pid =~ ^[0-9]+$ ]] || die "send: Missing or invalid PID: '$pid'"
+    local line=$*
+    [[ -d $DIR/$pid ]] || die "send: No debugged process $pid in this session."
+
+    local state stops
+    read -r state stops < <(state "$pid")
+    [[ $state == stopped ]] || die "send: Process $pid isn't stopped (it's $state)."
+
+    local before; before=$(snapshot)
+    printf '%s\n' "$line" > "$DIR/$pid/cmd" &
+    local writer=$!
+
+    wait-for-stop "$before"
+    kill "$writer" 2>/dev/null || true
+
+    if [[ -s $DIR/$pid/result ]]; then
+        cat "$DIR/$pid/result"
+        echo
+    fi
+    show-status
+}
+
+cmd-output () { cat "$DIR/script.out" 2>/dev/null; }
+
+cmd-log () {
+    [[ ${1:-} =~ ^[0-9]+$ && -d $DIR/$1 ]] || die "log: Missing or unknown PID: '${1:-}'"
+    cat "$DIR/$1/log"; echo
+}
+
+cmd-kill () {
+    local pid; pid=$(script-pid) || die "kill: The script wasn't started with '$PROG run'."
+    kill -- "-$pid" 2>/dev/null || true
+    local i; for (( i=0; i < 30; i++ )); do script-running || break; sleep 0.1; done
+    echo "Killed the script (pid $pid)."
+}
+
+cmd-end () {
+    if script-running; then cmd-kill; fi
+    rm -rf "$DIR"
+    [[ $(cat "$LAST" 2>/dev/null) != "$DIR" ]] || rm -f "$LAST"
+    echo "Ended the session."
+}
+
+
+# ---- Main ----
+
+while [[ ${1:-} == -* ]]; do
+    case $1 in
+        -d) DIR=${2:?}; shift 2 ;;
+        -t) TIMEOUT=${2:?}; shift 2 ;;
+        -h|--help) usage; exit ;;
+        *) die "Unknown option: $1 (see: $PROG --help)" ;;
+    esac
+done
+[[ $TIMEOUT =~ ^[0-9]+$ ]] || die "Invalid timeout: $TIMEOUT"
+
+command=${1:-}; shift || true
+case $command in
+    run) cmd-run "$@" ;;
+    status|wait|send|output|log|kill|end) find-session; "cmd-$command" "$@" ;;
+    step) find-session; cmd-send "${1:-}" "" ;;
+    resume) find-session; cmd-send "${1:-}" /resume ;;
+    help|"") usage ;;
+    *) die "Unknown command: $command (see: $PROG --help)" ;;
+esac

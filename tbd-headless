@@ -1,0 +1,110 @@
+#!/usr/bin/env bash
+#
+# The headless counterpart of tbd-view, used by tbd.sh when TBD_HEADLESS is
+# set to a directory. Instead of a tmux window, it keeps the state of the
+# debugger for a debugged process (subshells included) in files under
+# $TBD_HEADLESS/<pid>/, and takes commands from a FIFO there:
+#
+#   state   "<running|stopped|exited> <number of stops so far>"
+#   where   "<file>:<line>" of the current (or last) stop
+#   stop    The debugger's description of the current (or last) stop:
+#           the previous command's exit status and the command to run next.
+#   prompt  The debugger prompt of the current (or last) stop.
+#   result  Output of the last command entered at the debugger prompt.
+#   log     A transcript of the whole debugging session for the process.
+#   cmd     FIFO; write a command line to it when the state is "stopped".
+#
+# See tbd-ctl, which uses these to drive the debugger.
+#
+set -eo pipefail
+
+prompt_prefix=${1:?}
+tbd_pid=${1%%.*}
+
+dir=${TBD_HEADLESS:?}/$tbd_pid
+mkdir -p "$dir"
+
+tbd_pipe=$dir/out    # the debugger's output, and commands to the debugger
+view_pipe=$dir/view  # the source file and line number of each stop
+cmd_pipe=$dir/cmd    # commands from the user (or agent)
+
+# NOTE: Remove first, in case a PID got reused.
+rm -f "$tbd_pipe" "$view_pipe" "$cmd_pipe"
+mkfifo "$tbd_pipe" "$view_pipe" "$cmd_pipe"
+: > "$dir/log"; : > "$dir/result"; : > "$dir/stop"; : > "$dir/where"
+
+set-state () {
+    printf '%s %s\n' "$1" "$2" > "$dir/state.tmp"
+    mv -f "$dir/state.tmp" "$dir/state"
+}
+set-state running 0
+
+fifo-ack () { echo ACK > "$1"; }
+
+# Relay between the debugger and the cmd FIFO, recording what happens.
+serve () {
+    local response line stops=0 in_stop=
+    while true; do
+        response=$(cat "$tbd_pipe") && fifo-ack "$tbd_pipe"
+
+        if [[ $response == "$prompt_prefix"* ]]; then
+            response=${response#"$prompt_prefix"}
+            printf '%s\n' "$response" > "$dir/prompt"
+            printf %s "$response" >> "$dir/log"
+            set-state stopped $(( ++stops ))
+
+            IFS= read -r line < "$cmd_pipe" || line=/resume
+            : > "$dir/result"
+            in_stop=
+            set-state running "$stops"
+            printf '%s\n' "$line" >> "$dir/log"
+            printf '%s\n' "$line" > "$tbd_pipe"
+            continue
+        fi
+
+        printf '%s\n' "$response" >> "$dir/log"
+
+        # A stop is described by an "Exit status: N" message followed by
+        # one describing the location and the command; anything else is
+        # output of the commands entered.
+        if [[ $response == "Exit status:"* ]]; then
+            printf '%s\n' "$response" > "$dir/stop"
+            in_stop=x
+        elif [[ $in_stop ]]; then
+            printf '%s\n' "$response" >> "$dir/stop"
+            in_stop=
+        elif [[ $response ]]; then
+            printf '%s\n' "$response" >> "$dir/result"
+        fi
+    done
+}
+
+watch-view () {
+    local file line
+    while true; do
+        file=$(cat "$view_pipe") && fifo-ack "$view_pipe"
+        line=$(cat "$view_pipe")
+        printf '%s:%s\n' "$file" "$line" > "$dir/where"
+        fifo-ack "$view_pipe"
+    done
+}
+
+# Each background job gets its own process group with job control on, so
+# that it can be killed along with the cat processes it's blocked on.
+set -m
+
+serve      </dev/null >>"$dir/headless.log" 2>&1 & serve_pid=$!
+watch-view </dev/null >>"$dir/headless.log" 2>&1 & view_pid=$!
+
+# Clean up once the debugged process is gone.
+{
+    while kill -0 "$tbd_pid" 2>/dev/null; do sleep 0.2; done
+    kill -- "-$serve_pid" "-$view_pid" 2>/dev/null || true
+    read -r _ stops < "$dir/state" || stops=0
+    set-state exited "$stops"
+    rm -f "$tbd_pipe" "$view_pipe" "$cmd_pipe"
+} </dev/null >>"$dir/headless.log" 2>&1 &
+
+echo "$tbd_pipe"     # output line 1
+echo "$view_pipe"    # output line 2
+echo headless        # output line 3 (the "window id"; not used)
