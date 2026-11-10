@@ -21,6 +21,17 @@ set -eo pipefail
 prompt_prefix=${1:?}
 tbd_pid=${1%%.*}
 
+# Close the file descriptors inherited from the debugged process, other than
+# stdin/out/err (and 255, which Bash reads this script from). E.g., if it's
+# setting up a pipeline, our background processes would otherwise hold its
+# pipes open, so that the readers of the pipes would never get an EOF.
+for fd in /dev/fd/*; do
+    fd=${fd##*/}
+    [[ $fd =~ ^[0-9]+$ ]] && (( fd > 2 && fd != 255 )) || continue
+    exec {fd}>&- 2>/dev/null || true
+done
+unset fd
+
 dir=${TBD_HEADLESS:?}/$tbd_pid
 mkdir -p "$dir"
 
