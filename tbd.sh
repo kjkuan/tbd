@@ -61,9 +61,10 @@ following built-in commands:
     the `source` command). If `file_path` is ommitted, it's assumed to be the file
     of the current line _TBD_ is stepping on.
 
-    A `condition`, which is a string to be `eval`'ed at the break point, can be
-    specified. The break point will only be activated when the `condition` exits
-    with a status of `0`.
+    A `condition` can be specified as the rest of the line after the line number.
+    It's stored as is (no quoting needed; e.g., `/set-break 12 [[ $n == 5 ]]`),
+    and `eval`'ed at the break point. The break point will only be activated when
+    the `condition` exits with a status of `0`.
 
 * `/list-breaks`  List known break points. The indexes in the first column can be
                   used as arguments to the `/unset-breaks` command.
@@ -239,8 +240,15 @@ tbd-debug-trap () {
                         "") TBD_RC=0; break ;;
                     /skip) TBD_RC=1; break ;;
 
-                    /set-break\ *)   TBD_CMD=tbd-${TBD_CMD#/} ;;
-                    /unset-breaks\ *) TBD_CMD=tbd-${TBD_CMD#/} ;;
+                    /set-break|/set-break[[:blank:]]*)
+                        # Not eval'ed, so that the condition is stored verbatim
+                        # and only expanded when the break point is reached.
+                        IFS=$' \t\n' read -r TBD_CMD_1 TBD_CMD_2 <<<"${TBD_CMD#/set-break}"
+                        tbd-set-break "$TBD_CMD_1" "$TBD_CMD_2" >"$TBD_PIPE" 2>&1
+                        tbd-recv-ack "$TBD_PIPE"
+                        continue
+                        ;;
+                    /unset-breaks|/unset-breaks\ *) TBD_CMD=tbd-${TBD_CMD#/} ;;
                     /list-breaks)     TBD_CMD=tbd-${TBD_CMD#/} ;;
 
                     /stepout)
