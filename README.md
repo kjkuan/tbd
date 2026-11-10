@@ -35,13 +35,16 @@ You need to be running in a _tmux_ session already, and have [bat], `less`,
 and [tmux] in `PATH`. Of course, you should know how to use _tmux_; at least,
 you should know how to switch between _tmux_ windows.
 
+The [headless mode](#headless-mode-for-ai-agents-and-programs) needs none of
+these, just Bash.
+
 [bat]: https://github.com/sharkdp/bat
 [tmux]: https://github.com/tmux/tmux
 
 
 ## Installation and Usage
-Currently, there's no automatic installation; just clone the repo, add `tbd.sh` and `tbd-view`
-somewhere in `PATH`, and make both executable. For example:
+Currently, there's no automatic installation; just clone the repo, and add `tbd.sh`,
+`tbd-view`, `tbd-headless`, and `tbd-ctl` somewhere in `PATH`. For example:
 
 ```bash
 git clone git@github.com:kjkuan/tbd.git
@@ -53,6 +56,50 @@ a _tmux_ window; follow the on-screen help, or enter `/help`, for instructions.
 See also the [demo] above.
 
 [demo]: https://asciinema.org/a/B2HrHb46Qc4ryjSk
+
+
+## Headless Mode (for AI Agents and Programs)
+`tbd-ctl` drives _TBD_ without _tmux_ or a terminal: each command returns
+promptly with plain-text results, which makes it easy for an AI agent (or any
+program) to step through a script and inspect its state, instead of adding
+`echo`s and re-running it. For example:
+
+```console
+$ tbd-ctl run -s examples/restock    # -s: stop at the first command, even if
+Session: /tmp/tbd-ctl.mOoj1C2W       #     the script doesn't source tbd.sh
+Script: examples/restock (pid 4100)
+
+[4102] stopped at /home/me/tbd/examples/restock:10 in restock (last exit status: 0); next command:
+    set -e
+
+$ tbd-ctl send 4102 '/set-break 38 [[ $sku == banana ]]'
+[4102] stopped at /home/me/tbd/examples/restock:10 in restock (last exit status: 0); next command:
+    set -e
+
+$ tbd-ctl resume 4102
+[4102] running
+[4121] stopped at /home/me/tbd/examples/restock:38 in main() (last exit status: 0); next command:
+    cost=$(restock_cost "$qty" "$price")
+
+$ tbd-ctl send 4121 'echo "$sku $qty $price"'
+banana 7 0.25
+
+[4102] running
+[4121] stopped at /home/me/tbd/examples/restock:38 in main() (last exit status: 0); next command:
+    cost=$(restock_cost "$qty" "$price")
+
+$ tbd-ctl end
+Killed the script (pid 4100).
+Ended the session.
+```
+
+Each process, including each subshell (e.g., a side of a pipeline), is debugged
+separately, identified by its PID. See `tbd-ctl --help` for all the commands.
+It's also how to point an AI agent at it: tell it to read `tbd-ctl --help`.
+
+Under the hood, setting `TBD_HEADLESS` to a directory makes `tbd.sh` start
+`tbd-headless`, instead of `tbd-view`, which keeps the debugger's state in files
+under that directory, and takes commands from a FIFO there.
 
 
 ## Running Tests
