@@ -1,0 +1,93 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  SHELLSPEC_VERSION: 0.28.1
+
+jobs:
+  linux:
+    name: Linux (all specs)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      TERM: xterm-256color
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install tmux and bat
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tmux bat less
+
+      - name: Install ShellSpec
+        run: |
+          curl -fsSL "https://github.com/shellspec/shellspec/archive/refs/tags/${SHELLSPEC_VERSION}.tar.gz" |
+              tar xz -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/shellspec-${SHELLSPEC_VERSION}" >> "$GITHUB_PATH"
+
+      - name: Run specs
+        run: shellspec
+
+  bash-versions:
+    # The headless specs, which don't need tmux, on each supported Bash version.
+    name: Bash ${{ matrix.bash }} (headless specs)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        bash: ['4.4', '5.0', '5.1', '5.2', '5.3']
+    steps:
+      - uses: actions/checkout@v4
+
+      # NOTE: Run in the official bash image with `docker run`, rather than as
+      # a job container, as JavaScript actions (e.g., checkout) can't run in
+      # its Alpine (musl) based image.
+      - name: Run specs in bash:${{ matrix.bash }}
+        run: |
+          docker run --rm -v "$PWD:/src:ro" \
+              -e SHELLSPEC_VERSION \
+              "bash:${{ matrix.bash }}" bash -c '
+                  set -e
+                  cp -r /src /work && cd /work
+                  wget -qO- "https://github.com/shellspec/shellspec/archive/refs/tags/${SHELLSPEC_VERSION}.tar.gz" |
+                      tar xz -C /opt
+                  bash --version | head -1
+                  "/opt/shellspec-${SHELLSPEC_VERSION}/shellspec" spec/headless_spec.sh
+              '
+
+  macos:
+    name: macOS (all specs)
+    runs-on: macos-latest
+    timeout-minutes: 15
+    env:
+      TERM: xterm-256color
+    steps:
+      - uses: actions/checkout@v4
+
+      # macOS ships Bash 3.2; TBD needs 4.4 or later.
+      - name: Install Bash, tmux, and bat
+        run: brew install bash tmux bat
+
+      - name: Install ShellSpec
+        run: |
+          curl -fsSL "https://github.com/shellspec/shellspec/archive/refs/tags/${SHELLSPEC_VERSION}.tar.gz" |
+              tar xz -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/shellspec-${SHELLSPEC_VERSION}" >> "$GITHUB_PATH"
+
+      - name: Run specs
+        run: |
+          bash --version | head -1
+          shellspec --shell "$(brew --prefix)/bin/bash"
