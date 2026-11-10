@@ -180,7 +180,7 @@ tbd-set-break () {
         path=${BASH_SOURCE[1]}
     fi
 
-    printf %d "$lineno" >/dev/null 2>&1 && (( $lineno > 0 )) || {
+    [[ $lineno =~ ^[1-9][0-9]*$ ]] || {
         echo "Invalid line number: $lineno"
         return
     }
