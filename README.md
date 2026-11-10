@@ -18,9 +18,16 @@ times in the script. Setting conditional break points at runtime is also possibl
 with the caveat that a break point set from a subshell on its parent process will
 have no effects.
 
-See the [examples/fizzbuzz](examples/fizzbuzz) script and `/help` for details.
+See the [examples/fizzbuzz](examples/fizzbuzz) script and `/help` for details, and
+try finding the two bugs in [examples/restock](examples/restock) with _TBD_:
 
-Check out the demo [![asciicast](https://asciinema.org/a/btQpdrIcFKJuqgsARFvp7LEXY.svg)](https://asciinema.org/a/btQpdrIcFKJuqgsARFvp7LEXY)
+```bash
+DEBUG=1 examples/restock
+```
+
+Check out the demo, which does just that (spoilers!):
+
+[![asciicast](https://asciinema.org/a/B2HrHb46Qc4ryjSk.svg)](https://asciinema.org/a/B2HrHb46Qc4ryjSk)
 
 
 ## Prerequisites
@@ -45,4 +52,19 @@ To use it, simply `source tbd.sh` somewhere in your script, and run your script 
 a _tmux_ window; follow the on-screen help, or enter `/help`, for instructions.
 See also the [demo] above.
 
-[demo]: https://asciinema.org/a/btQpdrIcFKJuqgsARFvp7LEXY
+[demo]: https://asciinema.org/a/B2HrHb46Qc4ryjSk
+
+
+## Running Tests
+The tests are end-to-end specs written with [ShellSpec]; they drive _TBD_ in
+isolated, detached _tmux_ servers, so they don't touch your _tmux_ session, though
+they still need `tmux`, `bat`, and `less` in `PATH`. To run them:
+
+```bash
+shellspec
+```
+
+Set `TBD_TIMEOUT` (in seconds, default 15) to change how long a spec waits for
+the debugger before failing.
+
+[ShellSpec]: https://github.com/shellspec/shellspec

@@ -15,7 +15,13 @@ if which batcat >/dev/null 2>&1; then bat () { batcat "$@"; }; fi
 } >&2
 
 TBD_ORIG_SET=${-/i}
+TBD_ORIG_PWD=${TBD_ORIG_PWD:-$PWD}
 set +eu
+
+# NOTE: The script being debugged might have changed IFS, so avoid relying
+# on word splitting in any code that runs in the script's context.
+
+if [[ ${NO_COLOR:-} ]]; then TBD_BAT_COLOR=never; else TBD_BAT_COLOR=always; fi
 
 if [[ ! ${NO_COLOR:-} ]]; then
     TBD_NC='\e[0m'
@@ -29,7 +35,7 @@ fi
 tbd-show-help () {
     bat --decorations never  \
         --italic-text always \
-        --color always ${NO_COLOR:+--color never} \
+        --color "$TBD_BAT_COLOR" \
         -l markdown <<'EOF'
 Welcome to _TBD_, the Tmux Bash Debugger!
 
@@ -55,9 +61,10 @@ following built-in commands:
     the `source` command). If `file_path` is ommitted, it's assumed to be the file
     of the current line _TBD_ is stepping on.
 
-    A `condition`, which is a string to be `eval`'ed at the break point, can be
-    specified. The break point will only be activated when the `condition` exits
-    with a status of `0`.
+    A `condition` can be specified as the rest of the line after the line number.
+    It's stored as is (no quoting needed; e.g., `/set-break 12 [[ $n == 5 ]]`),
+    and `eval`'ed at the break point. The break point will only be activated when
+    the `condition` exits with a status of `0`.
 
 * `/list-breaks`  List known break points. The indexes in the first column can be
                   used as arguments to the `/unset-breaks` command.
@@ -102,7 +109,7 @@ declare -A TBD_SUBSHELL=()  # $BASHPID -> x
 tbd-init-window () {
     if [[ ! ${TBD_VIEW_PIPE:-} ]] || [[ $$ != $BASHPID && ! ${TBD_SUBSHELL[$BASHPID]:-} ]]; then
         TBD_PROMPT_PREFIX=$BASHPID.$RANDOM$RANDOM
-        local output; output=$(tbd-view $TBD_PROMPT_PREFIX)
+        local output; output=$(tbd-view "$TBD_PROMPT_PREFIX")
         TBD_SUBSHELL[$BASHPID]=x
 
         IFS=$'\n' read -d $'\0' -r TBD_{,VIEW_}PIPE TBD_WINDOW_ID <<<"$output"
@@ -118,15 +125,24 @@ tbd-cat  () { cat > "$TBD_PIPE" && tbd-recv-ack; }
 
 tbd-recv-ack () {
     local fifo=${1:-${TBD_PIPE:?}}
-    read -t2 -r < "$fifo" && [[ $REPLY == ACK ]] || {
+    local reply
+    IFS= read -t2 -r reply < "$fifo" && [[ $reply == ACK ]] || {
         echo "Missing ACK from $fifo" >&2
         return 1
     }
 }
 
 tbd-print-current-command () {
-    echo "${BASH_SOURCE[1]}" > "$TBD_VIEW_PIPE" && tbd-recv-ack "$TBD_VIEW_PIPE"
-    echo $TBD_LINENO         > "$TBD_VIEW_PIPE" && tbd-recv-ack "$TBD_VIEW_PIPE"
+    # Relative source paths are relative to where the script started, not to
+    # its current directory (it might have cd'ed) nor to the viewer pane's.
+    local src=${BASH_SOURCE[1]}
+    if [[ $src != /* && -e $TBD_ORIG_PWD/$src ]]; then
+        src=$TBD_ORIG_PWD/$src
+    elif [[ $src != /* ]]; then
+        src=$PWD/$src
+    fi
+    echo "$src" > "$TBD_VIEW_PIPE" && tbd-recv-ack "$TBD_VIEW_PIPE"
+    echo "$TBD_LINENO"       > "$TBD_VIEW_PIPE" && tbd-recv-ack "$TBD_VIEW_PIPE"
     if (( TBD_RC != 0 )); then
         local status=${TBD_LIGHTRED:-}${TBD_RC}${TBD_NC:-}
     else
@@ -139,7 +155,7 @@ tbd-print-current-command () {
 At ${BASH_SOURCE[1]}, line $TBD_LINENO:
 
 $(bat --decorations never  \
-      --color always ${NO_COLOR:+--color never} \
+      --color "$TBD_BAT_COLOR" \
       -l bash <<<"$BASH_COMMAND" \
    | sed 's/^/    /'
 )
@@ -153,7 +169,7 @@ tbd-print-prompt () {
     tbd-echo -en "${TBD_PROMPT_PREFIX:?}${TBD_PROMPT_COLOR:-}[$BASHPID] $funcnames:$TBD_LINENO ? ${TBD_NC:-}"
 }
 
-tbd-return () { return $1; }
+tbd-return () { return "$1"; }
 
 tbd-set-break () {
     local break=${1:-} cond=${2:-true}
@@ -164,7 +180,7 @@ tbd-set-break () {
         path=${BASH_SOURCE[1]}
     fi
 
-    printf %d "$lineno" >/dev/null 2>&1 && (( $lineno > 0 )) || {
+    [[ $lineno =~ ^[1-9][0-9]*$ ]] || {
         echo "Invalid line number: $lineno"
         return
     }
@@ -174,10 +190,15 @@ tbd-set-break () {
     TBD_BREAKS[$path:$lineno]=$cond
 }
 
+# Sets the caller's local `breaks` array to the sorted keys of TBD_BREAKS.
+tbd-sorted-breaks () {
+    breaks=()
+    (( ${#TBD_BREAKS[*]} )) || return 0
+    mapfile -t breaks < <(printf '%s\n' "${!TBD_BREAKS[@]}" | sort -t: -k1,1 -k2,2n)
+}
+
 tbd-unset-breaks () {
-    local has_glob=; [[ $- == *f* ]] && { has_glob=x; set -f; }
-    local breaks=($(echo "${!TBD_BREAKS[@]}" | sort -t: -k1,1 -nk2,2))
-    [[ $fglob ]] && set +f
+    local breaks; tbd-sorted-breaks
     if (( $# )); then
         local i break
         for i in "$@"; do
@@ -191,12 +212,10 @@ tbd-unset-breaks () {
 }
 
 tbd-list-breaks () (
-    local has_glob=; [[ $- == *f* ]] && { has_glob=x; set -f; }
-    local breaks=($(echo "${!TBD_BREAKS[@]}" | sort -t: -k1,1 -nk2,2))
-    [[ $fglob ]] && set +f
+    local breaks; tbd-sorted-breaks
     local i
     for ((i=0; i < ${#breaks[*]}; i++)); do
-        printf "%2d %s\t%s\n" $i "${breaks[i]}" "${TBD_BREAKS[${breaks[i]}]}"
+        printf "%2d %s\t%s\n" "$i" "${breaks[i]}" "${TBD_BREAKS[${breaks[i]}]}"
     done
 )
 
@@ -206,7 +225,11 @@ tbd-debug-trap () {
 
         if [[ ! ${TBD_RETURN_TRAP:-} ]]; then
 
+            # Only open a debugger window when we actually stop here, so that
+            # subshells running while resuming don't each pop up a window.
+            tbd-init-window
             tbd-print-current-command
+            TBD_VIEWING=x
 
             while true; do
                 tbd-print-prompt
@@ -214,12 +237,24 @@ tbd-debug-trap () {
                 if [[ $? != 0 ]]; then TBD_CMD=/resume; fi
 
                 case $TBD_CMD in
-                        *) tmux send-keys -t ":$TBD_WINDOW_ID.right" q ;;&
+                        # Quit the source viewer's pager (once per stop), so that
+                        # it's ready to show the next stop.
+                        *) [[ ! ${TBD_VIEWING:-} ]] || {
+                               tmux send-keys -t ":$TBD_WINDOW_ID.right" q
+                               TBD_VIEWING=
+                           } ;;&
                         "") TBD_RC=0; break ;;
                     /skip) TBD_RC=1; break ;;
 
-                    /set-break\ *)   TBD_CMD=tbd-${TBD_CMD#/} ;;
-                    /unset-breaks\ *) TBD_CMD=tbd-${TBD_CMD#/} ;;
+                    /set-break|/set-break[[:blank:]]*)
+                        # Not eval'ed, so that the condition is stored verbatim
+                        # and only expanded when the break point is reached.
+                        IFS=$' \t\n' read -r TBD_CMD_1 TBD_CMD_2 <<<"${TBD_CMD#/set-break}"
+                        tbd-set-break "$TBD_CMD_1" "$TBD_CMD_2" >"$TBD_PIPE" 2>&1
+                        tbd-recv-ack "$TBD_PIPE"
+                        continue
+                        ;;
+                    /unset-breaks|/unset-breaks\ *) TBD_CMD=tbd-${TBD_CMD#/} ;;
                     /list-breaks)     TBD_CMD=tbd-${TBD_CMD#/} ;;
 
                     /stepout)
@@ -238,7 +273,7 @@ tbd-debug-trap () {
                     /resume)
                         TBD_RESUMING=x
                         if ! (( ${#TBD_BREAKS[*]} )); then
-                            trap DEBUG; shopt -u extdebug; set -$TBD_ORIG_SET
+                            trap DEBUG; shopt -u extdebug; set "-$TBD_ORIG_SET"
                         fi
                         TBD_RC=0; break
                         ;;
@@ -268,7 +303,7 @@ tbd-debug-trap () {
                 set +T; {TBD_OUT}>&1 {TBD_ERR}>&2 >"$TBD_PIPE" 2>&1 eval "$TBD_CMD"; set -T
                 tbd-recv-ack "$TBD_PIPE"
             done
-            tbd-return ${TBD_RC:-0}
+            tbd-return "${TBD_RC:-0}"
         else
             TBD_RETURN_TRAP=
         fi
@@ -277,7 +312,7 @@ tbd-debug-trap () {
 
 
 TBD_DEBUG_TRAP=$(
-    echo 'TBD_RC=$?; TBD_LINENO=$LINENO; tbd-init-window'
+    echo 'TBD_RC=$?; TBD_LINENO=$LINENO'
     declare -pf tbd-debug-trap | sed '1,2d;$d'
 )
 

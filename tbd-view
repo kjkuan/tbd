@@ -5,13 +5,17 @@ set -eo pipefail
 prompt_prefix=${1:?}
 tbd_pid=${1%%.*}
 
+# Use absolute paths in a private temp dir so the FIFOs stay reachable even
+# if the debugged script changes its working directory.
+tbd_dir=$(mktemp -d "${TMPDIR:-/tmp}/tbd.XXXXXXXX")
+
 # where commands are written to and outputs are to be read from and shown
-tbd_pipe=.tbd-out.$$
+tbd_pipe=$tbd_dir/out
 mkfifo "$tbd_pipe"
 echo "$tbd_pipe"      # output line 1
 
 # where the current source line number should be written to by the debugger
-view_pipe=.tbd-view.$$
+view_pipe=$tbd_dir/view
 mkfifo "$view_pipe"
 echo "$view_pipe"     # output line 2
 
@@ -26,9 +30,12 @@ main () {
     [[ -p "${view_pipe:?}" ]]
     trap '
         set +e
-        tmux kill-pane -t ":$window_id.right"
         rm -f "$view_pipe" "$tbd_pipe" "$0"
+        rmdir "$tbd_dir" 2>/dev/null
         history -a
+        # NOTE: Do this last; if the source view pane does not exist yet,
+        # ".right" resolves to this pane, killing ourselves.
+        tmux kill-pane -t ":$window_id.right"
     ' EXIT
 
     ( while kill -0 $tbd_pid >/dev/null 2>&1; do sleep 1; done
@@ -37,11 +44,15 @@ main () {
     view-source-pane
 
     HISTFILE=$HOME/.tbd_history; history -r || true
-    local line response rc
+    local line response prompt rc
     while true; do
         response=$(cat "$tbd_pipe") && fifo-ack
         if [[ $response == "$prompt_prefix"* ]]; then
-            IFS= read -erp "${response#$prompt_prefix}" line || rc=$?
+            # Mark the color escapes in the prompt as non-printing for readline
+            # (\001 ... \002), or it miscounts the prompt's width and garbles
+            # input lines that wrap.
+            prompt=$(printf %s "${response#"$prompt_prefix"}" | sed $'s/\e\\[[0-9;]*m/\001&\002/g')
+            IFS= read -erp "$prompt" line || rc=$?
             [[ ! $line ]] || history -s "$line"
             [[ ${rc:-0} == 0 ]] || break  # NOTE: Exiting the loop on Ctrl-D could potentially make the debugged script stuck on a break point.
             echo "$line" > "$tbd_pipe"
@@ -93,7 +104,7 @@ cat > "$repl_script" <<EOF
 #!/usr/bin/env bash
 set -e
 
-$(declare -p tbd_pid prompt_prefix tbd_pipe view_pipe window_id)
+$(declare -p tbd_pid prompt_prefix tbd_dir tbd_pipe view_pipe window_id)
 $(if [[ ${NO_COLOR:-} ]]; then echo export NO_COLOR=x; fi)
 
 $(declare -f fifo-ack)
