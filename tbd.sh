@@ -20,7 +20,8 @@ else
         exit 1
     } >&2
 
-    if which batcat >/dev/null 2>&1; then bat () { batcat "$@"; }; fi
+    # NOTE: Not a `bat` function, which would be visible to the script.
+    if which batcat >/dev/null 2>&1; then TBD_BAT=batcat; else TBD_BAT=bat; fi
 
     [[ ${TMUX:-} ]] || {
         echo "Please run TBD within a tmux session."
@@ -52,7 +53,7 @@ fi
 
 
 tbd-show-help () {
-    bat --decorations never  \
+    "$TBD_BAT" --decorations never  \
         --italic-text always \
         --color "$TBD_BAT_COLOR" \
         -l markdown <<'EOF'
@@ -127,7 +128,9 @@ declare -A TBD_SUBSHELL=()  # $BASHPID -> x
 
 tbd-init-window () {
     if [[ ! ${TBD_VIEW_PIPE:-} ]] || [[ $$ != $BASHPID && ! ${TBD_SUBSHELL[$BASHPID]:-} ]]; then
-        TBD_PROMPT_PREFIX=$BASHPID.$RANDOM$RANDOM
+        # NOTE: Not from $RANDOM, which would change the sequence of random
+        # numbers the script gets (e.g., if it seeded it).
+        TBD_PROMPT_PREFIX=$BASHPID.$(od -An -N8 -tu4 /dev/urandom | tr -d ' \n')
         local output
         if [[ ${TBD_HEADLESS:-} ]]; then
             output=$(tbd-headless "$TBD_PROMPT_PREFIX")
@@ -205,7 +208,7 @@ tbd-print-current-command () {
     if [[ ${TBD_HEADLESS:-} ]]; then
         code=$(sed 's/^/    /' <<<"$cmd")
     else
-        code=$(bat --decorations never --color "$TBD_BAT_COLOR" -l bash <<<"$cmd" | sed 's/^/    /')
+        code=$("$TBD_BAT" --decorations never --color "$TBD_BAT_COLOR" -l bash <<<"$cmd" | sed 's/^/    /')
     fi
 
     tbd-cat <<EOF
@@ -223,7 +226,16 @@ tbd-print-prompt () {
     tbd-echo -en "${TBD_PROMPT_PREFIX:?}${TBD_PROMPT_COLOR:-}[$BASHPID] $funcnames:$TBD_LINENO ? ${TBD_NC:-}"
 }
 
-tbd-restore-eu () { [[ ! $TBD_SET_EU ]] || set "-$TBD_SET_EU"; }
+# Code to eval when TBD's DEBUG trap is done, to restore what it changed of the
+# script's state. NOTE: It's eval'ed, rather than called as a function, as the
+# return of a function would fire the script's RETURN trap (functrace is on).
+TBD_RESTORE='
+    [[ ! $TBD_SET_EU ]] || set "-$TBD_SET_EU"
+    if [[ $TBD_TRAPS_SAVED ]]; then
+        eval "$TBD_ERR_TRAP"
+        [[ $TBD_TRAPS_SAVED == err ]] || eval "$TBD_RET_TRAP"
+    fi
+'
 
 tbd-set-break () {
     local break=${1:-} cond=${2:-true}
@@ -234,7 +246,8 @@ tbd-set-break () {
         path=${BASH_SOURCE[1]}
     fi
 
-    [[ $lineno =~ ^[1-9][0-9]*$ ]] || {
+    # NOTE: Not with =~, which would change BASH_REMATCH.
+    [[ $lineno && $lineno != *[!0-9]* && $lineno != 0* ]] || {
         echo "Invalid line number: $lineno"
         return
     }
@@ -277,107 +290,115 @@ tbd-debug-trap () {
     # The script might have turned on errexit or nounset after TBD was loaded;
     # turn them off while TBD runs, and restore them when it's done.
     TBD_SET_EU=${-//[^eu]/}; set +eu
-    TBD_TRAP_RC=0
+    TBD_TRAP_RC=0 TBD_TRAPS_SAVED=
 
     if [[ ! ${TBD_RESUMING:-} ]] || eval "${TBD_BREAKS[$BASH_SOURCE:$TBD_LINENO]:-false}"; then
         TBD_RESUMING=
 
-        if [[ ! ${TBD_RETURN_TRAP:-} ]]; then
+        # With extdebug, errtrace and functrace are on, so the script's ERR
+        # and RETURN traps would fire for TBD's own failing commands and
+        # function returns (and for commands entered at the prompt); set
+        # them aside while stopped.
+        TBD_ERR_TRAP=$(trap -p ERR) TBD_RET_TRAP=$(trap -p RETURN)
+        trap - ERR RETURN
+        TBD_TRAPS_SAVED=x
 
-            # Only open a debugger window when we actually stop here, so that
-            # subshells running while resuming don't each pop up a window.
-            tbd-init-window
-            tbd-print-current-command
-            [[ ${TBD_HEADLESS:-} ]] || TBD_VIEWING=x
+        # Only open a debugger window when we actually stop here, so that
+        # subshells running while resuming don't each pop up a window.
+        tbd-init-window
+        tbd-print-current-command
+        [[ ${TBD_HEADLESS:-} ]] || TBD_VIEWING=x
 
-            while true; do
-                tbd-print-prompt
-                tbd-read-line TBD_CMD "$TBD_PIPE" || TBD_CMD=/resume
+        while true; do
+            tbd-print-prompt
+            tbd-read-line TBD_CMD "$TBD_PIPE" || TBD_CMD=/resume
 
-                case $TBD_CMD in
-                        # Quit the source viewer's pager (once per stop), so that
-                        # it's ready to show the next stop.
-                        *) [[ ! ${TBD_VIEWING:-} ]] || {
-                               tmux send-keys -t ":$TBD_WINDOW_ID.right" q
-                               TBD_VIEWING=
-                           } ;;&
-                        "") TBD_RC=0; break ;;
-                    /skip) TBD_RC=1; break ;;
+            case $TBD_CMD in
+                    # Quit the source viewer's pager (once per stop), so that
+                    # it's ready to show the next stop.
+                    *) [[ ! ${TBD_VIEWING:-} ]] || {
+                           tmux send-keys -t ":$TBD_WINDOW_ID.right" q
+                           TBD_VIEWING=
+                       } ;;&
+                    "") TBD_RC=0; break ;;
+                /skip) TBD_RC=1; break ;;
 
-                    /set-break|/set-break[[:blank:]]*)
-                        # Not eval'ed, so that the condition is stored verbatim
-                        # and only expanded when the break point is reached.
-                        IFS=$' \t\n' read -r TBD_CMD_1 TBD_CMD_2 <<<"${TBD_CMD#/set-break}"
-                        tbd-set-break "$TBD_CMD_1" "$TBD_CMD_2" >"$TBD_PIPE" 2>&1
-                        tbd-recv-ack "$TBD_PIPE"
+                /set-break|/set-break[[:blank:]]*)
+                    # Not eval'ed, so that the condition is stored verbatim
+                    # and only expanded when the break point is reached.
+                    IFS=$' \t\n' read -r TBD_CMD_1 TBD_CMD_2 <<<"${TBD_CMD#/set-break}"
+                    tbd-set-break "$TBD_CMD_1" "$TBD_CMD_2" >"$TBD_PIPE" 2>&1
+                    tbd-recv-ack "$TBD_PIPE"
+                    continue
+                    ;;
+                /unset-breaks|/unset-breaks\ *) TBD_CMD=tbd-${TBD_CMD#/} ;;
+                /list-breaks)     TBD_CMD=tbd-${TBD_CMD#/} ;;
+
+                /stepout)
+                    (( ${#FUNCNAME[*]} > 1 )) || {
+                        tbd-echo "Error: Not in a function."
                         continue
-                        ;;
-                    /unset-breaks|/unset-breaks\ *) TBD_CMD=tbd-${TBD_CMD#/} ;;
-                    /list-breaks)     TBD_CMD=tbd-${TBD_CMD#/} ;;
+                    }
+                    TBD_DEBUG_TRAP=$(trap -p DEBUG); trap DEBUG; set +T
+                    # Once the function returns, restore the script's RETURN
+                    # trap, and then the DEBUG trap; last, so that it doesn't
+                    # fire for the rest of this RETURN trap.
+                    trap '
+                        trap - RETURN; eval "$TBD_RET_TRAP"
+                        set -T; eval "$TBD_DEBUG_TRAP"
+                    ' RETURN
+                    TBD_TRAPS_SAVED=err  # the RETURN trap is restored by the above
+                    TBD_RC=0; break
+                    ;;
 
-                    /stepout)
-                        (( ${#FUNCNAME[*]} > 1 )) || {
-                            tbd-echo "Error: Not in a function."
-                            continue
-                        }
-                        TBD_DEBUG_TRAP=$(trap -p DEBUG); trap DEBUG; set +T
-                        trap '
-                            TBD_RETURN_TRAP=$FUNCNAME
-                            set -T; eval "$TBD_DEBUG_TRAP"; trap RETURN
-                        ' RETURN
-                        TBD_RC=0; break
-                        ;;
+                /resume)
+                    TBD_RESUMING=x
+                    if ! (( ${#TBD_BREAKS[*]} )); then
+                        trap DEBUG; shopt -u extdebug; set "-$TBD_ORIG_SET"
+                    fi
+                    TBD_RC=0; break
+                    ;;
 
-                    /resume)
-                        TBD_RESUMING=x
-                        if ! (( ${#TBD_BREAKS[*]} )); then
-                            trap DEBUG; shopt -u extdebug; set "-$TBD_ORIG_SET"
-                        fi
-                        TBD_RC=0; break
-                        ;;
+                /help) tbd-show-help | tbd-cat; continue ;;
+            esac
 
-                    /help) tbd-show-help | tbd-cat; continue ;;
-                esac
+            IFS=' '$'\t'$'\n' read -r TBD_CMD_1 TBD_CMD_2 <<<"$TBD_CMD"
+            case $TBD_CMD_1 in
+                break|continue)
+                    eval "$TBD_RESTORE"
+                    eval "$TBD_CMD_1 $(( ${TBD_CMD_2:-1} + 1 ))"
+                    #FIXME: redirect stderr to a file and ship that log to the repl later
+                    ;;
+                return)
+                    (( ${#FUNCNAME[*]} > 1 )) || {
+                        tbd-echo "Error: Not in a function."
+                        continue
+                    }
+                    eval "$TBD_RESTORE"
+                    eval "$TBD_CMD"
+                    #FIXME: redirect stderr to a file and ship that log to the repl later
+                    ;;
+            esac
 
-                IFS=' '$'\t'$'\n' read -r TBD_CMD_1 TBD_CMD_2 <<<"$TBD_CMD"
-                case $TBD_CMD_1 in
-                    break|continue)
-                        tbd-restore-eu
-                        eval "$TBD_CMD_1 $(( ${TBD_CMD_2:-1} + 1 ))"
-                        #FIXME: redirect stderr to a file and ship that log to the repl later
-                        ;;
-                    return)
-                        (( ${#FUNCNAME[*]} > 1 )) || {
-                            tbd-echo "Error: Not in a function."
-                            continue
-                        }
-                        tbd-restore-eu
-                        eval "$TBD_CMD"
-                        #FIXME: redirect stderr to a file and ship that log to the repl later
-                        ;;
-                esac
-
-                [[ ! ${TBD_OUT:-} ]] || eval exec "$TBD_OUT>&-"
-                [[ ! ${TBD_ERR:-} ]] || eval exec "$TBD_ERR>&-"
-
-                set +T; {TBD_OUT}>&1 {TBD_ERR}>&2 >"$TBD_PIPE" 2>&1 eval "$TBD_CMD"; set -T
-                tbd-recv-ack "$TBD_PIPE"
-            done
-            TBD_TRAP_RC=${TBD_RC:-0}
-        else
-            TBD_RETURN_TRAP=
-        fi
+            set +T; {TBD_OUT}>&1 {TBD_ERR}>&2 >"$TBD_PIPE" 2>&1 eval "$TBD_CMD"; set -T
+            # NOTE: {var} redirections persist beyond the command; close
+            # them, so that the script's child processes don't inherit them.
+            exec {TBD_OUT}>&- {TBD_ERR}>&-
+            tbd-recv-ack "$TBD_PIPE"
+        done
+        TBD_TRAP_RC=${TBD_RC:-0}
     fi
 
-    tbd-restore-eu
+    eval "$TBD_RESTORE"
     # The trap's status: non-zero makes Bash skip the current command (e.g.,
     # for /skip). Negated with "!", so that errexit, if restored, ignores it.
-    (( TBD_TRAP_RC == 0 )) || ! :
+    # The ":" commands restore $_ (the last argument of the previous command).
+    (( TBD_TRAP_RC == 0 )) && : "$TBD_LAST_ARG" || ! : "$TBD_LAST_ARG"
 }
 
 
 TBD_DEBUG_TRAP=$(
-    echo 'TBD_RC=$?; TBD_LINENO=$LINENO'
+    echo 'TBD_RC=$? TBD_LAST_ARG=$_; TBD_LINENO=$LINENO'
     # Enabling extdebug while Bash is still reading its startup files (e.g.,
     # BASH_ENV) makes it try to load the bashdb debugger, and fail. So, in
     # that case, enable it from the DEBUG trap; i.e., once the script starts.

@@ -268,6 +268,65 @@ EOF
       The status should be success
       The output should eq "$(printf '%s\n' 'errexit2.sh:3 in errexit2.sh (last exit status: 0); next command:' 'exited with status 1' before)"
     End
+    It "doesn't change the script's special variables, traps, or file descriptors"
+      scenario() {
+        # The script sources /dev/null, instead of tbd.sh, when run plainly,
+        # so that the RETURN trap fires the same way.
+        script probe.sh <<'EOF'
+#!/usr/bin/env bash
+trap 'echo "ERR at line $LINENO"' ERR
+trap 'echo "RETURN at line $LINENO"' RETURN
+RANDOM=42
+source "${TBD:-/dev/null}"
+echo "random=$RANDOM $RANDOM"
+[[ abc =~ b(c) ]]
+echo "rematch=${BASH_REMATCH[*]}"
+false | true
+echo "pipestatus=${PIPESTATUS[*]}"
+: lastarg
+echo "underscore=$_"
+false
+echo "status=$?"
+read -r <<<"from-read"
+echo "reply=$REPLY"
+echo "fds=$(cd /dev/fd && echo *)"
+EOF
+        cd "$TBD_WORK" || return
+        ./probe.sh > plain.out 2>&1
+
+        # Step through every stop of every process. At each stop of the main
+        # process, also set a break point (which used to change BASH_REMATCH),
+        # run a failing command (which used to fire the ERR trap), and run a
+        # command (which used to leave $TBD_OUT/$TBD_ERR open).
+        TBD=tbd.sh ctl run ./probe.sh >/dev/null
+        local main; main=$(stopped_pids)
+        local i st pid
+        for (( i=0; i < 100; i++ )); do
+          st=$(ctl status)
+          [[ $st == *"script exited"* ]] && break
+          pid=$(sed -n 's/^\[\([0-9]*\)\] stopped.*/\1/p' <<<"$st" | sed -n 1p)
+          if [[ ! $pid ]]; then ctl wait >/dev/null; continue; fi
+          if [[ $pid == "$main" ]]; then
+            ctl send "$pid" '/set-break 1000' >/dev/null
+            ctl send "$pid" 'false' >/dev/null
+            ctl send "$pid" 'echo hi' >/dev/null
+          fi
+          ctl step "$pid" >/dev/null
+        done
+        ctl output > tbd.out
+
+        # NOTE: Bash < 5.1 doesn't preserve PIPESTATUS across a DEBUG trap that
+        # runs a command substitution or a pipeline, which TBD does when it
+        # stops; fixed in Bash 5.1.
+        if (( BASH_VERSINFO[0] < 5 || (BASH_VERSINFO[0] == 5 && BASH_VERSINFO[1] < 1) )); then
+          sed -i.bak '/^pipestatus=/d' plain.out tbd.out
+        fi
+        diff plain.out tbd.out && echo "same output"
+      }
+      When call scenario
+      The status should be success
+      The output should eq 'same output'
+    End
   End
 
   Describe 'debugger commands'
