@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+#
+# Prints a restock report for a small inventory.
+#
+# This script has two classic Bash bugs in it; see if you can find them with
+# TBD by running:
+#
+#     DEBUG=1 examples/restock
+#
+set -e
+
+THRESHOLD=10
+
+inventory () {
+    # sku      qty  price
+    cat <<'END'
+apple       42   0.50
+banana       7   0.25
+cherry       0   4.00
+durian      15  12.00
+elderberry   3   6.50
+END
+}
+
+# Prints the cost, in cents, of restocking an item up to the threshold.
+restock_cost () {
+    local qty=$1 price=$2
+    local cents=${price/./}
+    echo $(( (THRESHOLD - qty) * cents ))
+}
+
+main () {
+    local total=0 sku qty price cost
+
+    echo "Items below $THRESHOLD in stock:"
+    inventory | while read -r sku qty price; do
+        (( qty < THRESHOLD )) || continue
+        cost=$(restock_cost "$qty" "$price")
+        printf '  %-12s %3d  $%d.%02d\n' "$sku" "$qty" $((cost / 100)) $((cost % 100))
+        total=$(( total + cost ))
+    done
+    printf 'Total restock cost: $%d.%02d\n' $((total / 100)) $((total % 100))
+}
+
+[[ ! ${DEBUG:-} ]] || source tbd.sh
+
+main "$@"
