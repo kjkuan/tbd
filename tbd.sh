@@ -147,10 +147,30 @@ tbd-init-window () {
 tbd-echo () { echo "$@" > "$TBD_PIPE" && tbd-recv-ack; }
 tbd-cat  () { cat > "$TBD_PIPE" && tbd-recv-ack; }
 
+# tbd-read-line <var> <fifo>
+#
+# Read a line from a FIFO into a variable, waiting for up to 2 seconds for it
+# once the FIFO is opened. Returns non-zero on a timeout.
+#
+# NOTE: The other side opens and closes the FIFO for every message, so when
+# we open it right after reading a message from it, the open can succeed
+# because the writer of that message hasn't closed it yet; we'd then get an
+# EOF without any data. Every line we read ends with a newline, so in that
+# case, just open it again.
+tbd-read-line () {
+    local rc
+    while true; do
+        IFS= read -t2 -r "$1" < "$2"; rc=$?
+        (( rc == 0 )) && return 0
+        (( rc > 128 )) && return "$rc"  # timed out
+        [[ ! ${!1} ]] || return 0       # a last line without a newline
+    done
+}
+
 tbd-recv-ack () {
     local fifo=${1:-${TBD_PIPE:?}}
     local reply
-    IFS= read -t2 -r reply < "$fifo" && [[ $reply == ACK ]] || {
+    tbd-read-line reply "$fifo" && [[ $reply == ACK ]] || {
         echo "Missing ACK from $fifo" >&2
         return 1
     }
@@ -272,8 +292,7 @@ tbd-debug-trap () {
 
             while true; do
                 tbd-print-prompt
-                IFS= read -t2 -r TBD_CMD < "$TBD_PIPE"
-                if [[ $? != 0 ]]; then TBD_CMD=/resume; fi
+                tbd-read-line TBD_CMD "$TBD_PIPE" || TBD_CMD=/resume
 
                 case $TBD_CMD in
                         # Quit the source viewer's pager (once per stop), so that
