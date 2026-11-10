@@ -1,3 +1,5 @@
+[![CI](https://github.com/kjkuan/tbd/actions/workflows/ci.yml/badge.svg)](https://github.com/kjkuan/tbd/actions/workflows/ci.yml)
+
 ## What is it?
 _TBD_ (Tmux Bash Debugger) is a simple debugger for Bash that can be used to
 interactively inspect or debug the execution of a Bash script. It's meant to be
@@ -31,12 +33,15 @@ Check out the demo, which does just that (spoilers!):
 
 
 ## Prerequisites
+_TBD_ needs Bash 4.4 or later (on macOS, which ships Bash 3.2, install a newer
+one; e.g., `brew install bash`).
+
 You need to be running in a _tmux_ session already, and have [bat], `less`,
 and [tmux] in `PATH`. Of course, you should know how to use _tmux_; at least,
 you should know how to switch between _tmux_ windows.
 
 The [headless mode](#headless-mode-for-ai-agents-and-programs) needs none of
-these, just Bash.
+these, just Bash (4.4 or later).
 
 [bat]: https://github.com/sharkdp/bat
 [tmux]: https://github.com/tmux/tmux
