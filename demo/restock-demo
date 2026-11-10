@@ -1,0 +1,236 @@
+#!/usr/bin/env bash
+#
+# Plays a scripted demo of debugging examples/restock with TBD, in a fresh
+# tmux server, and attaches to it. To record it with asciinema:
+#
+#     asciinema rec --cols 240 --rows 64 -c demo/restock-demo restock-demo.cast
+#
+# (Don't use asciinema's --idle-time-limit; it'd cut the reading pauses short.)
+#
+# Environment variables:
+#
+#   DEMO_COLS, DEMO_ROWS  Terminal size (default: the current terminal's).
+#   DEMO_TYPE_DELAY       Seconds between typed characters (default: 0.04).
+#   DEMO_PAUSE            Multiplier for the pauses that give viewers time to
+#                         read what happened after each step (default: 2).
+#   DEMO_SNAPSHOTS        If set, a directory to save pane snapshots into at
+#                         each step (useful for checking the demo headlessly).
+#
+set -eo pipefail
+
+cd "$(dirname "$0")/.."
+ROOT=$PWD
+
+SOCKET=tbd-demo-$$
+COLS=${DEMO_COLS:-$(tput cols 2>/dev/null || echo 120)}
+ROWS=${DEMO_ROWS:-$(tput lines 2>/dev/null || echo 32)}
+TYPE_DELAY=${DEMO_TYPE_DELAY:-0.04}
+PAUSE=${DEMO_PAUSE:-2}
+TIMEOUT=20
+
+DEMO_HOME=$(mktemp -d "${TMPDIR:-/tmp}/tbd-demo.XXXXXXXX")
+cleanup () {
+    tmux -L "$SOCKET" kill-server >/dev/null 2>&1 || true
+    rm -rf "$DEMO_HOME"
+}
+trap cleanup EXIT
+
+T () { tmux -L "$SOCKET" "$@"; }
+
+# Keep the system bashrc from greeting us in a fresh HOME.
+touch "$DEMO_HOME/.hushlogin" "$DEMO_HOME/.sudo_as_admin_successful"
+
+cat > "$DEMO_HOME/bashrc" <<'EOF'
+PS1='\[\e[1;32m\]$\[\e[0m\] '
+EOF
+
+cat > "$DEMO_HOME/tmux.conf" <<EOF
+set -g default-command "bash --rcfile '$DEMO_HOME/bashrc' --noprofile"
+set -g status-style "bg=colour24,fg=colour255"
+set -g status-left "[tbd demo] "
+set -g status-right ""
+set -g window-status-current-style "bg=colour255,fg=colour24,bold"
+EOF
+
+start-session () {
+    env HOME="$DEMO_HOME" \
+        PATH="$ROOT:$PATH" \
+        tmux -L "$SOCKET" -f "$DEMO_HOME/tmux.conf" \
+            new-session -d -s demo -x "$COLS" -y "$ROWS" -c "$ROOT"
+}
+
+
+# ---- Helpers for directing the demo ----
+
+pause () { sleep "$(awk "BEGIN { print $1 * $PAUSE }")"; }
+
+# Simulate typing some text into a pane.
+type-text () {
+    local pane=$1 text=$2 i
+    for (( i=0; i < ${#text}; i++ )); do
+        # NOTE: A lone ";" is a command separator to tmux; escape it.
+        if [[ ${text:i:1} == ";" ]]; then
+            T send-keys -t "$pane" -l -- '\;'
+        else
+            T send-keys -t "$pane" -l -- "${text:i:1}"
+        fi
+        sleep "$TYPE_DELAY"
+    done
+}
+
+# Type a line and hit Enter.
+run () {
+    type-text "$1" "$2"
+    sleep 0.4  # a beat before hitting Enter; not scaled by DEMO_PAUSE
+    T send-keys -t "$1" Enter
+}
+
+# Narrate by typing a comment at a prompt.
+say () {
+    run "$1" "# $2"
+    pause "${3:-2}"
+}
+
+capture () { T capture-pane -p -J -t "$1" 2>/dev/null; }
+
+# wait-for <pane> <ERE>
+wait-for () {
+    local i
+    for (( i=0; i < TIMEOUT * 10; i++ )); do
+        capture "$1" | grep -Eq -- "$2" && return 0
+        sleep 0.1
+    done
+    echo "Demo timed out waiting for /$2/ in pane $1; it has:" >&2
+    capture "$1" >&2
+    return 1
+}
+
+# Print the id of the REPL pane (pane 0) of the debugger window whose REPL
+# matches the given ERE; wait for it to appear.
+find-repl () {
+    local i pane
+    for (( i=0; i < TIMEOUT * 10; i++ )); do
+        for pane in $(T list-panes -s -t demo -F '#{pane_index} #{pane_id}' | awk '$1 == 0 { print $2 }'); do
+            capture "$pane" | grep -Eq -- "$1" && { echo "$pane"; return 0; }
+        done
+        sleep 0.1
+    done
+    echo "Demo timed out waiting for a REPL matching /$1/" >&2
+    return 1
+}
+
+show () { T select-window -t "$(T display-message -p -t "$1" '#{window_id}')"; }
+
+snap () {
+    [[ ${DEMO_SNAPSHOTS:-} ]] || return 0
+    mkdir -p "$DEMO_SNAPSHOTS"
+    local window pane
+    SNAP_NO=$(( ${SNAP_NO:-0} + 1 ))
+    for window in $(T list-windows -t demo -F '#{window_id}'); do
+        echo "=== $1 / window $window"
+        for pane in $(T list-panes -t "$window" -F '#{pane_id}'); do
+            echo "--- pane $pane"
+            capture "$pane"
+        done
+    done > "$DEMO_SNAPSHOTS/$(printf %02d "$SNAP_NO")-$1.txt"
+}
+
+
+# ---- The demo ----
+
+direct () {
+    local shell=demo:0.0 main loop left sub
+
+    wait-for "$shell" '\$ *$'
+    pause 1
+    say "$shell" "Here's a script that's supposed to print a restock report:" 1
+    run "$shell" "examples/restock"
+    pause 2.5
+    say "$shell" "But banana should cost \$0.75, and the total is clearly wrong. Let's debug it with TBD:" 1
+    run "$shell" "grep -n tbd.sh examples/restock"
+    pause 2.5
+    run "$shell" "DEBUG=1 examples/restock"
+
+    main=$(find-repl 'restock:47 \? *$')
+    pause 4; snap start
+    T send-keys -t "$main" C-l; pause 1
+    say "$main" "TBD stopped right after it got sourced. Press Enter to step:" 1
+    run "$main" ""; wait-for "$main" 'main\(\):32 \? *$'; pause 1.5
+    run "$main" ""; wait-for "$main" 'main\(\):33 \? *$'; pause 1.5
+    run "$main" ""; wait-for "$main" 'main\(\):35 \? *$'; pause 1.5
+    run "$main" ""; wait-for "$main" 'main\(\):36 \? *$'; pause 1
+    say "$main" "Each side of a pipeline runs in its own subshell; TBD opens a window for each:" 1
+    run "$main" ""
+
+    left=$(find-repl 'inventory<main\(\):14 \? *$')
+    loop=$(find-repl '^    read -r sku qty price *$')
+    pause 1; snap pipeline
+    show "$left"; pause 1.5
+    say "$left" "This is the left side of the pipeline. Let it run:" 1
+    run "$left" "/resume"; pause 1
+
+    show "$loop"; pause 1
+    say "$loop" "And this is the while loop, running in parallel (note the different PID)."
+    say "$loop" "Let's set a conditional break point for when it gets to banana:" 1
+    run "$loop" '/set-break 38 [[ $sku == banana ]]'; pause 1
+    run "$loop" "/list-breaks"; pause 2
+    run "$loop" "/resume"
+    wait-for "$loop" 'main\(\):38 \? *$'; pause 1.5
+    run "$loop" 'echo "$sku $qty $price"'; pause 2
+    say "$loop" "Step into the command substitution, which runs in yet another subshell:" 1
+    run "$loop" ""
+
+    sub=$(find-repl '^    restock_cost "\$qty" "\$price" *$')
+    pause 1.5
+    run "$sub" ""; wait-for "$sub" 'restock_cost<main\(\):26 \? *$'; pause 1
+    run "$sub" ""; wait-for "$sub" 'restock_cost<main\(\):27 \? *$'; pause 1
+    run "$sub" ""; wait-for "$sub" 'restock_cost<main\(\):28 \? *$'; pause 1
+    run "$sub" ""; wait-for "$sub" 'restock_cost<main\(\):29 \? *$'; pause 1
+    run "$sub" "local -p"; pause 2
+    run "$sub" 'echo $(( cents ))'; pause 2
+    say "$sub" "Bug #1: '025' has a leading 0, so Bash treats it as octal (21, not 25)!" 3
+    run "$sub" 'echo $(( 10#$cents ))'; pause 2
+    say "$sub" "Forcing base 10 fixes it. Let this subshell finish:" 1
+    snap subshell
+    run "$sub" "/resume"
+
+    show "$loop"
+    wait-for "$loop" 'main\(\):39 \? *$'; pause 1.5
+    run "$loop" 'echo "cost=$cost total=$total"'; pause 2
+    say "$loop" "Remove the break point and let the loop finish:" 1
+    run "$loop" "/unset-breaks"; pause 1
+    run "$loop" "/resume"
+
+    show "$main"
+    wait-for "$main" 'main\(\):42 \? *$'; pause 1.5
+    say "$main" "Back in the main process, after the pipeline:" 1
+    run "$main" 'echo "total=$total"'; pause 2
+    say "$main" "Bug #2: the loop only updated its own subshell's copy of total!" 2.5
+    say "$main" "Fix: feed the loop with 'done < <(inventory)' instead of a pipe." 2.5
+    snap main
+    run "$main" "/resume"
+
+    wait-for "$shell" 'Total restock cost'; pause 1
+    snap end
+    say "$shell" "Happy debugging!" 1
+}
+
+
+start-session
+if [[ -t 0 && -t 1 ]]; then
+    # Direct the demo in the background while we're attached to it. Whether
+    # it finishes or fails, kill the tmux server so that we get detached.
+    ( trap 'T kill-server >/dev/null 2>&1' EXIT; direct ) 2>"$DEMO_HOME/director.log" &
+    TMUX= T attach -t demo >/dev/null || true
+    rc=0; wait $! || rc=$?
+    clear
+    printf '\n  \e[1mTBD\e[0m: the Tmux Bash Debugger\n  https://github.com/kjkuan/tbd\n\n'
+    sleep 3
+    if (( rc != 0 )); then
+        echo "The demo failed:" >&2
+        cat "$DEMO_HOME/director.log" >&2
+    fi
+    exit "$rc"
+else
+    direct
+fi
