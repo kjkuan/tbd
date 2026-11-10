@@ -5,13 +5,17 @@ set -eo pipefail
 prompt_prefix=${1:?}
 tbd_pid=${1%%.*}
 
+# Use absolute paths in a private temp dir so the FIFOs stay reachable even
+# if the debugged script changes its working directory.
+tbd_dir=$(mktemp -d "${TMPDIR:-/tmp}/tbd.XXXXXXXX")
+
 # where commands are written to and outputs are to be read from and shown
-tbd_pipe=.tbd-out.$$
+tbd_pipe=$tbd_dir/out
 mkfifo "$tbd_pipe"
 echo "$tbd_pipe"      # output line 1
 
 # where the current source line number should be written to by the debugger
-view_pipe=.tbd-view.$$
+view_pipe=$tbd_dir/view
 mkfifo "$view_pipe"
 echo "$view_pipe"     # output line 2
 
@@ -26,9 +30,12 @@ main () {
     [[ -p "${view_pipe:?}" ]]
     trap '
         set +e
-        tmux kill-pane -t ":$window_id.right"
         rm -f "$view_pipe" "$tbd_pipe" "$0"
+        rmdir "$tbd_dir" 2>/dev/null
         history -a
+        # NOTE: Do this last; if the source view pane does not exist yet,
+        # ".right" resolves to this pane, killing ourselves.
+        tmux kill-pane -t ":$window_id.right"
     ' EXIT
 
     ( while kill -0 $tbd_pid >/dev/null 2>&1; do sleep 1; done
@@ -93,7 +100,7 @@ cat > "$repl_script" <<EOF
 #!/usr/bin/env bash
 set -e
 
-$(declare -p tbd_pid prompt_prefix tbd_pipe view_pipe window_id)
+$(declare -p tbd_pid prompt_prefix tbd_dir tbd_pipe view_pipe window_id)
 $(if [[ ${NO_COLOR:-} ]]; then echo export NO_COLOR=x; fi)
 
 $(declare -f fifo-ack)
