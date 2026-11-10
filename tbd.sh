@@ -33,6 +33,10 @@ TBD_ORIG_SET=${-/i}
 TBD_ORIG_PWD=${TBD_ORIG_PWD:-$PWD}
 set +eu
 
+# Sourcing tbd.sh is a break point; stop at the next command even if we
+# were resuming (e.g., a /resume in this process, or in its parent).
+TBD_RESUMING=
+
 # NOTE: The script being debugged might have changed IFS, so avoid relying
 # on word splitting in any code that runs in the script's context.
 
