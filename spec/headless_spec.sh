@@ -183,9 +183,9 @@ EOF
         cd "$TBD_WORK" || return
         ctl run -s ./children.sh >/dev/null
         sleep 1  # give a runaway, if any, time to show up
-        echo "sessions: $(session_pids | wc -l)"
+        echo "sessions: $(( $(session_pids | wc -l) ))"
         ctl resume "$(stopped_pids)" | grep -o 'exited with status [0-9]*'
-        echo "sessions: $(session_pids | wc -l)"
+        echo "sessions: $(( $(session_pids | wc -l) ))"
         ctl output
       }
       When call scenario

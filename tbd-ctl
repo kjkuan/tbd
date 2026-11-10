@@ -105,11 +105,12 @@ find-session () {
         die "No debugging session found; start one with: $PROG run <script>"
 }
 
+# Print the PIDs of the debugged processes, in numeric order.
 pids () {
     local d
     for d in "$DIR"/[0-9]*/; do
         [[ -e $d/state ]] && { d=${d%/}; echo "${d##*/}"; }
-    done
+    done | sort -n
 }
 
 # Print "<running|stopped|exited> <stops>" for a process.
@@ -170,7 +171,7 @@ show-stop () {
     rc=$(sed -n 's/^Exit status: *//p' "$DIR/$pid/stop")
     echo "[$pid] stopped at ${where:-?} in $func (last exit status: ${rc:-?}); next command:"
     # The command is indented by 4 spaces in the stop description.
-    sed -n '/^At .*, line [0-9]*:$/,$ { /^    /p }' "$DIR/$pid/stop"
+    sed -n '/^At .*, line [0-9]*:$/,$ { /^    /p; }' "$DIR/$pid/stop"
 }
 
 show-status () {

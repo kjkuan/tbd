@@ -141,4 +141,4 @@ tbd_wait_cleaned_up() {
     }
 }
 
-tbd_windows_opened() { wc -l < "$TBD_TEST_DIR/views.log"; }
+tbd_windows_opened() { echo $(( $(wc -l < "$TBD_TEST_DIR/views.log") )); }
