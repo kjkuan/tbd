@@ -216,12 +216,19 @@ cmd-run () {
     # Run it in the background, in its own process group (with job control
     # on), so that `kill` can kill it along with its subshells, and so that
     # it survives signals sent to our process group once we've returned.
+    #
+    # NOTE: Bash sets the process group from both the parent and the child,
+    # and on macOS, the child's attempt can fail with a warning (though the
+    # parent's succeeds), which it prints before the redirections of the
+    # command apply; hence the redirection of the whole group.
     set -m
-    bash -c '
-        echo $$ > "$0/script.pid"
-        env "${@:2:$1}" "${@:$1+2}" >"$0/script.out" 2>&1 </dev/null
-        echo $? > "$0/script.status"
-    ' "$DIR" "${#env[@]}" "${env[@]}" "$@" </dev/null >/dev/null 2>&1 &
+    {
+        bash -c '
+            echo $$ > "$0/script.pid"
+            env "${@:2:$1}" "${@:$1+2}" >"$0/script.out" 2>&1 </dev/null
+            echo $? > "$0/script.status"
+        ' "$DIR" "${#env[@]}" "${env[@]}" "$@" </dev/null >/dev/null 2>&1 &
+    } 2>/dev/null
     set +m
 
     echo "Session: $DIR"
