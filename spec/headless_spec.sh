@@ -14,7 +14,7 @@ Describe 'tbd-ctl'
   pid_at() {
     ctl status | awk -v re="$1" '
       /^\[[0-9]+\] stopped/ { pid = substr($1, 2, length($1) - 2); next }
-      pid && $0 ~ re { print pid; exit }
+      pid && !found && $0 ~ re { print pid; found = 1 }
     '
   }
 
@@ -112,7 +112,7 @@ Describe 'tbd-ctl'
       ctl resume "$pid" | sed "s/\[$pid\]/[MAIN]/; s/^\[[0-9]*\] stopped/[SUB] stopped/"
       local sub; sub=$(stopped_pids)
       [[ $sub != "$pid" ]] && echo "subshell is a separate process"
-      ctl send "$sub" 'echo "$BASHPID"' | head -1 | sed "s/^$sub\$/same pid/"
+      ctl send "$sub" 'echo "$BASHPID"' | sed -n 1p | sed "s/^$sub\$/same pid/"
       ctl resume "$sub" | grep -o 'exited with status [0-9]*'
       ctl output
     }
@@ -318,13 +318,13 @@ EOF
         local pid; pid=$(stopped_pids)
         ctl send "$pid" '/set-break 8' >/dev/null
         ctl resume "$pid" >/dev/null
-        ctl send "$pid" 'echo "at i=$i"' | head -1
+        ctl send "$pid" 'echo "at i=$i"' | sed -n 1p
 
         # NOTE: The current command still runs before the loop control
         # takes effect; i.e., `echo "a$i"` runs, but `echo "b$i"` doesn't.
         ctl send "$pid" continue >/dev/null
         ctl resume "$pid" >/dev/null
-        ctl send "$pid" 'echo "at i=$i"' | head -1
+        ctl send "$pid" 'echo "at i=$i"' | sed -n 1p
         ctl send "$pid" '/unset-breaks' >/dev/null
         ctl send "$pid" break | grep -o 'control.sh:[0-9]* in [^ ]*'
 
@@ -404,7 +404,7 @@ EOF
         local pid; pid=$(stopped_pids)
         ctl send "$pid" '/set-break ./lib.sh:2 [[ $1 == b ]]' >/dev/null
         ctl resume "$pid" | grep -o 'lib.sh:[0-9]* in [^ ]*'
-        ctl send "$pid" 'echo "arg=$1"' | head -1
+        ctl send "$pid" 'echo "arg=$1"' | sed -n 1p
         ctl resume "$pid" >/dev/null
         ctl output
       }
@@ -488,7 +488,7 @@ EOF
         ctl send 1 'echo hi'; echo "status=$?"
         ctl -t 1 step "$pid" >/dev/null
         ctl send "$pid" 'echo hi' 2>&1 | sed "s/$pid/PID/"
-        ctl log "$pid" | head -1 | sed "s/$pid/PID/"
+        ctl log "$pid" | sed -n 1p | sed "s/$pid/PID/"
         ctl wait >/dev/null; ctl resume "$pid" >/dev/null
         ctl output
       }

@@ -7,7 +7,8 @@ tbd_pid=${1%%.*}
 
 # Use absolute paths in a private temp dir so the FIFOs stay reachable even
 # if the debugged script changes its working directory.
-tbd_dir=$(mktemp -d "${TMPDIR:-/tmp}/tbd.XXXXXXXX")
+tmp_dir=${TMPDIR:-/tmp}
+tbd_dir=$(mktemp -d "${tmp_dir%/}/tbd.XXXXXXXX")
 
 # where commands are written to and outputs are to be read from and shown
 tbd_pipe=$tbd_dir/out
@@ -30,15 +31,21 @@ main () {
     [[ -p "${view_pipe:?}" ]]
     trap '
         set +e
-        rm -f "$view_pipe" "$tbd_pipe" "$0"
-        rmdir "$tbd_dir" 2>/dev/null
+        # NOTE: Remove the whole dir, not just the FIFOs; a late write to a
+        # removed FIFO path (e.g., an ACK from the source view pane) would
+        # create a regular file in its place, leaving the dir non-empty.
+        rm -rf "$tbd_dir" "$0"
         history -a
         # NOTE: Do this last; if the source view pane does not exist yet,
         # ".right" resolves to this pane, killing ourselves.
         tmux kill-pane -t ":$window_id.right"
     ' EXIT
 
+    # Once the debugged process is gone, clean up and end this REPL. (Clean
+    # up here, too, rather than relying only on the EXIT trap above, which
+    # might not get to run, or finish, before the window is gone.)
     ( while kill -0 $tbd_pid >/dev/null 2>&1; do sleep 1; done
+      rm -rf "$tbd_dir" || true
       kill $$
     ) &
     view-source-pane

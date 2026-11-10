@@ -22,7 +22,10 @@ spec_helper_configure() {
 }
 
 tbd_setup() {
-    TBD_TEST_DIR=$(mktemp -d "${TMPDIR:-/tmp}/tbd-spec.XXXXXXXX")
+    # NOTE: Strip the trailing slash TMPDIR has on macOS, as paths in TBD's
+    # output won't have the "//" it'd cause.
+    local tmp=${TMPDIR:-/tmp}
+    TBD_TEST_DIR=$(mktemp -d "${tmp%/}/tbd-spec.XXXXXXXX")
     TBD_WORK=$TBD_TEST_DIR/work
     TBD_SOCKET=tbd-spec-$$-$RANDOM
     mkdir "$TBD_TEST_DIR"/{home,tmp,bin,work}
@@ -134,7 +137,13 @@ tbd_wait_cleaned_up() {
         T has-session -t t >/dev/null 2>&1 || break
         sleep 0.1
     done
-    local leftovers; leftovers=$(ls -A "$TBD_TEST_DIR/tmp")
+    # The debugger's processes clean up as they exit; give them a moment.
+    local leftovers
+    for (( i=0; i < 20; i++ )); do
+        leftovers=$(ls -A "$TBD_TEST_DIR/tmp")
+        [[ $leftovers ]] || break
+        sleep 0.1
+    done
     [[ ! $leftovers ]] || {
         echo "Leftover files in TMPDIR: $leftovers" >&2
         return 1

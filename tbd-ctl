@@ -94,7 +94,7 @@ die () { echo "$PROG: $*" >&2; exit 1; }
 
 DIR=${TBD_CTL_DIR:-}
 TIMEOUT=10
-LAST=${TMPDIR:-/tmp}/tbd-ctl.$(id -u).last
+LAST=${TMPDIR:-/tmp}; LAST=${LAST%/}/tbd-ctl.$(id -u).last
 
 
 # ---- Session helpers ----
@@ -206,7 +206,8 @@ cmd-run () {
     done
     (( $# )) || die "run: Missing the script to run."
 
-    DIR=$(mktemp -d "${TMPDIR:-/tmp}/tbd-ctl.XXXXXXXX") || exit 1
+    local tmp=${TMPDIR:-/tmp}
+    DIR=$(mktemp -d "${tmp%/}/tbd-ctl.XXXXXXXX") || exit 1
     echo "$DIR" > "$LAST"
 
     local -a env=(TBD_HEADLESS="$DIR" PATH="$TBD_ROOT:$PATH")
