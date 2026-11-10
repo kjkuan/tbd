@@ -48,7 +48,7 @@ Press `Enter` alone to execute or step into the current command, or enter one of
 following built-in commands:
 
 * `/help`    Show this help message.
-* `/skip`    Skip the current command, resulting in a command status of 1.
+* `/skip`    Skip the current command.
 * `/stepout` Execute the rest of the function until it returns; ignores break points.
 * `/resume`  Resume the script until the next break point or wherever `tbd.sh` is
              sourced next.
@@ -136,6 +136,7 @@ tbd-print-current-command () {
     # Relative source paths are relative to where the script started, not to
     # its current directory (it might have cd'ed) nor to the viewer pane's.
     local src=${BASH_SOURCE[1]}
+    while [[ $src == ./* ]]; do src=${src#./}; done
     if [[ $src != /* && -e $TBD_ORIG_PWD/$src ]]; then
         src=$TBD_ORIG_PWD/$src
     elif [[ $src != /* ]]; then
@@ -169,7 +170,7 @@ tbd-print-prompt () {
     tbd-echo -en "${TBD_PROMPT_PREFIX:?}${TBD_PROMPT_COLOR:-}[$BASHPID] $funcnames:$TBD_LINENO ? ${TBD_NC:-}"
 }
 
-tbd-return () { return "$1"; }
+tbd-restore-eu () { [[ ! $TBD_SET_EU ]] || set "-$TBD_SET_EU"; }
 
 tbd-set-break () {
     local break=${1:-} cond=${2:-true}
@@ -220,6 +221,11 @@ tbd-list-breaks () (
 )
 
 tbd-debug-trap () {
+    # The script might have turned on errexit or nounset after TBD was loaded;
+    # turn them off while TBD runs, and restore them when it's done.
+    TBD_SET_EU=${-//[^eu]/}; set +eu
+    TBD_TRAP_RC=0
+
     if [[ ! ${TBD_RESUMING:-} ]] || eval "${TBD_BREAKS[$BASH_SOURCE:$TBD_LINENO]:-false}"; then
         TBD_RESUMING=
 
@@ -284,6 +290,7 @@ tbd-debug-trap () {
                 IFS=' '$'\t'$'\n' read -r TBD_CMD_1 TBD_CMD_2 <<<"$TBD_CMD"
                 case $TBD_CMD_1 in
                     break|continue)
+                        tbd-restore-eu
                         eval "$TBD_CMD_1 $(( ${TBD_CMD_2:-1} + 1 ))"
                         #FIXME: redirect stderr to a file and ship that log to the repl later
                         ;;
@@ -292,6 +299,7 @@ tbd-debug-trap () {
                             tbd-echo "Error: Not in a function."
                             continue
                         }
+                        tbd-restore-eu
                         eval "$TBD_CMD"
                         #FIXME: redirect stderr to a file and ship that log to the repl later
                         ;;
@@ -303,11 +311,16 @@ tbd-debug-trap () {
                 set +T; {TBD_OUT}>&1 {TBD_ERR}>&2 >"$TBD_PIPE" 2>&1 eval "$TBD_CMD"; set -T
                 tbd-recv-ack "$TBD_PIPE"
             done
-            tbd-return "${TBD_RC:-0}"
+            TBD_TRAP_RC=${TBD_RC:-0}
         else
             TBD_RETURN_TRAP=
         fi
     fi
+
+    tbd-restore-eu
+    # The trap's status: non-zero makes Bash skip the current command (e.g.,
+    # for /skip). Negated with "!", so that errexit, if restored, ignores it.
+    (( TBD_TRAP_RC == 0 )) || ! :
 }
 
 
