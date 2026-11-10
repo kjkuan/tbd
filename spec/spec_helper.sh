@@ -2,7 +2,7 @@
 #
 # Helpers for driving TBD end-to-end inside an isolated tmux server.
 #
-# Each example gets its own tmux server (-L socket), HOME, and TMPDIR, so it
+# Each example gets its own tmux server (-S socket), HOME, and TMPDIR, so it
 # doesn't touch the user's tmux session, ~/.tbd_history, or /tmp. Window 0
 # runs the script being debugged (stdout/stderr -> $TBD_WORK/out); window 1
 # is the main process's debugger REPL (pane 0) and source view (pane 1), and
@@ -27,7 +27,7 @@ tbd_setup() {
     local tmp=${TMPDIR:-/tmp}
     TBD_TEST_DIR=$(mktemp -d "${tmp%/}/tbd-spec.XXXXXXXX")
     TBD_WORK=$TBD_TEST_DIR/work
-    TBD_SOCKET=tbd-spec-$$-$RANDOM
+    TBD_SOCKET=$TBD_TEST_DIR/tmux.sock  # in the test dir, so it gets removed with it
     mkdir "$TBD_TEST_DIR"/{home,tmp,bin,work}
 
     # Wrapper that records every debugger window TBD opens.
@@ -41,11 +41,11 @@ EOF
 }
 
 tbd_teardown() {
-    tmux -L "$TBD_SOCKET" kill-server >/dev/null 2>&1 || true
+    tmux -S "$TBD_SOCKET" kill-server >/dev/null 2>&1 || true
     rm -rf "${TBD_TEST_DIR:?}"
 }
 
-T() { tmux -L "$TBD_SOCKET" "$@"; }
+T() { tmux -S "$TBD_SOCKET" "$@"; }
 
 # tbd_run <script> [cmd-prefix]
 #
@@ -60,7 +60,7 @@ tbd_run() {
         TMPDIR="$TBD_TEST_DIR/tmp" \
         PATH="$TBD_TEST_DIR/bin:$TBD_ROOT:$PATH" \
         SHELL=/bin/bash \
-        tmux -L "$TBD_SOCKET" -f /dev/null \
+        tmux -S "$TBD_SOCKET" -f /dev/null \
             new-session -d -s t -x 250 -y 50 "bash -c $(printf %q "$cmd")"
 }
 

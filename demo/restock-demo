@@ -21,7 +21,6 @@ set -eo pipefail
 cd "$(dirname "$0")/.."
 ROOT=$PWD
 
-SOCKET=tbd-demo-$$
 COLS=${DEMO_COLS:-$(tput cols 2>/dev/null || echo 120)}
 ROWS=${DEMO_ROWS:-$(tput lines 2>/dev/null || echo 32)}
 TYPE_DELAY=${DEMO_TYPE_DELAY:-0.04}
@@ -29,13 +28,14 @@ PAUSE=${DEMO_PAUSE:-2}
 TIMEOUT=20
 
 DEMO_HOME=$(mktemp -d "${TMPDIR:-/tmp}/tbd-demo.XXXXXXXX")
+SOCKET=$DEMO_HOME/tmux.sock  # in DEMO_HOME, so it gets removed with it
 cleanup () {
-    tmux -L "$SOCKET" kill-server >/dev/null 2>&1 || true
+    tmux -S "$SOCKET" kill-server >/dev/null 2>&1 || true
     rm -rf "$DEMO_HOME"
 }
 trap cleanup EXIT
 
-T () { tmux -L "$SOCKET" "$@"; }
+T () { tmux -S "$SOCKET" "$@"; }
 
 # Keep the system bashrc from greeting us in a fresh HOME.
 touch "$DEMO_HOME/.hushlogin" "$DEMO_HOME/.sudo_as_admin_successful"
@@ -55,7 +55,7 @@ EOF
 start-session () {
     env HOME="$DEMO_HOME" \
         PATH="$ROOT:$PATH" \
-        tmux -L "$SOCKET" -f "$DEMO_HOME/tmux.conf" \
+        tmux -S "$SOCKET" -f "$DEMO_HOME/tmux.conf" \
             new-session -d -s demo -x "$COLS" -y "$ROWS" -c "$ROOT"
 }
 
